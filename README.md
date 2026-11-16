@@ -1,2 +1,2 @@
 # Lauzerrrn
-Repo für Richtig- und Falschgeld in Lauzern
+Repo für Falsch und gefälschtes Geld in Lauzern
