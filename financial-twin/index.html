@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interaktiver Financial Twin für den LauzHack. Plane Lebensereignisse und vergleiche ihre Auswirkungen auf dein Nettovermögen.">
+  <meta name="theme-color" content="#f7f7f4">
+  <title>Financial Twin · UBS Challenge</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="game.css">
+  <script defer src="model.js"></script>
+  <script defer src="chart.js"></script>
+  <script defer src="timeline.js"></script>
+  <script defer src="app.js"></script>
+  <script defer src="story.js"></script>
+  <script defer src="scenes.js"></script>
+  <script defer src="coach.js"></script>
+  <script defer src="game.js"></script>
+</head>
+<body>
+  <div id="game-view">
+    <header class="site-header game-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#" aria-label="Financial Twin, Lebensspiel">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Financial Twin<small>UBS CHALLENGE · LAUZHACK</small></span>
+        </a>
+        <div class="game-header-actions">
+          <button type="button" id="coach-jump" class="button button-subtle" hidden>Zum Zwilling-Chat</button>
+          <button type="button" id="open-dashboard" class="button button-subtle">Dashboard öffnen</button>
+        </div>
+      </div>
+    </header>
+    <main class="shell game-shell">
+      <div class="game-heading">
+        <h1 id="game-title">Spiel dein Leben<span class="headline-dot">.</span></h1>
+        <p id="game-description">Gestalte deinen digitalen Zwilling und probiere aus, wohin deine Entscheidungen führen.</p>
+      </div>
+      <nav id="chapter-nav" class="chapter-nav" aria-label="Lebenskapitel" hidden></nav>
+      <div class="game-layout">
+        <div class="game-story-column">
+        <section class="scene-card" aria-labelledby="scene-title">
+          <div class="scene-image">
+            <canvas id="life-scene" aria-hidden="true"></canvas>
+            <div class="scene-banner"><span id="scene-place">Heute</span><strong id="scene-age">20 Jahre</strong></div>
+          </div>
+          <div class="scene-caption">
+            <div><h2 id="scene-title">Lerne deinen Zwilling kennen</h2><p id="scene-text"></p></div>
+            <button type="button" class="button button-secondary" id="skip-animation" hidden>Überspringen</button>
+          </div>
+          <div class="scene-budget" id="chapter-budget" hidden></div>
+        </section>
+        <section class="panel coach-panel" id="coach-panel" aria-labelledby="coach-title" hidden>
+          <div class="coach-heading">
+            <span class="avatar" id="coach-initial" aria-hidden="true">Z</span>
+            <div>
+              <h2 id="coach-title">Zwilling-Chat</h2>
+              <p id="coach-state">Ich schaue mir deinen Lebensweg an.</p>
+            </div>
+            <button class="text-button" id="coach-toggle" type="button" aria-expanded="true" aria-controls="coach-conversation">Einklappen</button>
+          </div>
+          <div id="coach-conversation">
+            <ol id="coach-thread" class="coach-thread" role="log" aria-label="Gespräch mit deinem Zwilling"></ol>
+            <p class="coach-progress" id="coach-progress" role="status" hidden></p>
+            <div id="coach-prompts" class="coach-prompts" aria-label="Mögliche Nachrichten"></div>
+            <form id="coach-form" class="coach-composer">
+              <label class="visually-hidden" for="coach-message">Deine Nachricht an den Zwilling</label>
+              <textarea id="coach-message" rows="2" maxlength="400" required placeholder="Antworte deinem Zwilling oder stelle eine Frage …"></textarea>
+              <button type="submit" id="coach-send" class="button button-primary">Senden</button>
+            </form>
+          </div>
+        </section>
+        </div>
+        <section class="panel game-panel" id="game-panel" aria-label="Spielentscheidungen">
+          <form id="avatar-form">
+            <h2>Gestalte deinen Zwilling</h2>
+            <div class="form-grid avatar-fields">
+              <label>Name<input name="name" value="Alexia" maxlength="40" autocomplete="off"></label>
+              <label>Startalter<input name="age" value="20" type="number" min="18" max="99" required></label>
+              <label>Hautton<select name="skin"><option value="0">Hell</option><option value="1" selected>Warm</option><option value="2">Braun</option><option value="3">Dunkel</option></select></label>
+              <label>Frisur<select name="hair"><option value="0">Kurz</option><option value="1" selected>Lockig</option><option value="2">Lang</option></select></label>
+              <label class="form-wide">Kleidung<select name="outfit"><option value="0">Kaminrot</option><option value="1">Tannengrün</option><option value="2">Indigoblau</option><option value="3">Ocker</option></select></label>
+            </div>
+            <details class="start-finances">
+              <summary>Finanzielle Ausgangslage</summary>
+              <div class="form-grid">
+                <label class="form-wide">Bisherige Ausbildung<select name="education"><option>Schulabschluss</option><option>Berufslehre</option><option>Bachelor</option><option>Master</option><option>Promotion</option><option>Keine Angabe</option></select></label>
+                <label>Kontostand (CHF)<input name="cash" type="number" min="0" max="100000000" value="8000" step="0.01" required></label>
+                <label>Bestehende Anlagen (CHF)<input name="portfolio" type="number" min="0" max="100000000" value="0" step="0.01" required></label>
+                <label>Nettoeinkommen / Monat (CHF)<input name="income" type="number" min="0" max="100000000" value="4200" step="0.01" required></label>
+                <label>Ausgaben / Monat (CHF)<input name="expenses" type="number" min="0" max="100000000" value="3000" step="0.01" required></label>
+              </div>
+            </details>
+            <div class="game-actions">
+              <button type="submit" class="button button-primary">Leben spielen</button>
+              <button type="button" class="button button-secondary" id="alexia-demo">Demo mit Alexia</button>
+            </div>
+          </form>
+          <div id="game-interaction" hidden></div>
+        </section>
+      </div>
+    </main>
+    <footer class="shell site-footer">
+      <span>Financial Twin · Hackathon-Prototyp</span>
+      <span>Fiktive Daten und illustrative Annahmen</span>
+    </footer>
+  </div>
+
+  <div id="dashboard-view" hidden>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="#uebersicht" aria-label="Financial Twin, Übersicht">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Financial Twin<small>UBS CHALLENGE · LAUZHACK</small></span>
+      </a>
+      <nav aria-label="Hauptnavigation">
+        <button class="text-button" type="button" id="back-to-game">Zum Lebensspiel</button>
+        <a href="#uebersicht">Übersicht</a>
+        <a href="#zeitstrahl">Zeitstrahl</a>
+        <a href="#anlageplan">Anlageplan</a>
+      </nav>
+      <button class="button button-subtle" type="button" id="header-profile">
+        <span class="avatar avatar-small" id="header-initial" aria-hidden="true">A</span>
+        <span>Profil bearbeiten</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="shell" id="uebersicht">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <h1 id="page-title">Dein Leben. Dein Finanzplan<span class="headline-dot">.</span></h1>
+        <p>Probiere Lebensentscheidungen aus und sieh, wie sich dein Vermögen entwickelt.</p>
+      </div>
+      <span class="demo-label" id="demo-label">Fiktives Demo-Profil</span>
+    </section>
+
+    <section class="metrics" aria-label="Vermögensübersicht">
+      <article class="metric">
+        <span class="metric-label">Nettovermögen heute</span>
+        <strong id="current-net">–</strong>
+        <span class="metric-note">Kontostand und bestehende Anlagen</span>
+      </article>
+      <article class="metric metric-projection">
+        <span class="metric-label" id="future-label">Modelliertes Nettovermögen</span>
+        <strong id="future-net">–</strong>
+        <span class="metric-note" id="future-purchasing-power">Kaufkraft in heutigen CHF</span>
+      </article>
+      <article class="metric">
+        <span class="metric-label">Effekt des Sparplans</span>
+        <strong id="investment-effect">–</strong>
+        <span class="metric-note">Gegenüber derselben Zukunft ohne Sparplan</span>
+      </article>
+    </section>
+
+    <div class="dashboard">
+      <div class="main-column">
+        <section class="panel projection" aria-labelledby="projection-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="projection-title">Vermögensentwicklung</h2>
+              <p>Nettovermögen in nominalen CHF über die Zeit</p>
+            </div>
+            <label class="select-wrap">
+              <span class="visually-hidden">Endalter der Projektion</span>
+              <select id="projection-age"></select>
+            </label>
+          </div>
+          <div class="chart-controls">
+            <div class="segmented" role="group" aria-label="Vergleich im Diagramm">
+              <button type="button" id="compare-investments" aria-pressed="true">Sparplan</button>
+              <button type="button" id="compare-events" aria-pressed="false">Lebensereignisse</button>
+              <button type="button" id="compare-paths" aria-pressed="false" hidden>Zwei Lebenswege</button>
+            </div>
+            <label class="band-toggle"><input id="show-range" type="checkbox" checked> Renditeband</label>
+          </div>
+          <div class="chart-wrap" id="chart-wrap">
+            <canvas id="wealth-chart" tabindex="0" aria-label="Vermögensentwicklung. Mit den Pfeiltasten den Zeitpunkt wählen." aria-describedby="comparison-summary chart-readout">
+              Die Werte am Ende der Projektion stehen in der Vermögensübersicht.
+            </canvas>
+            <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
+            <p class="visually-hidden" id="chart-readout" aria-live="polite"></p>
+          </div>
+          <div class="chart-legend">
+            <span><i class="legend-line"></i> Mit Sparplan &amp; Ereignissen</span>
+            <span><i class="legend-line legend-comparison"></i> <span id="comparison-legend">Ohne monatlichen Sparplan</span></span>
+            <span id="range-legend"><i class="legend-band"></i> Schwache bis starke Rendite</span>
+          </div>
+          <p class="chart-summary" id="comparison-summary" aria-live="polite"></p>
+        </section>
+
+        <section class="panel timeline" id="zeitstrahl" aria-labelledby="timeline-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="timeline-title">Dein Zeitstrahl</h2>
+              <p>Klicke auf den Pfeil, um ein Ereignis einzufügen. Ziehe es nach links oder rechts, um es zu verschieben.</p>
+            </div>
+            <button type="button" class="button button-primary" id="add-event"><span aria-hidden="true">+</span> Ereignis hinzufügen</button>
+          </div>
+          <div class="timeline-scroll" id="timeline-scroll">
+            <div class="timeline-track" id="timeline-track" tabindex="0" role="group" aria-label="Zeitstrahl. Wähle einen Monat mit den Pfeiltasten. Füge mit Enter ein Ereignis hinzu. Verschiebe markierte Ereignisse mit den Pfeiltasten um ein Jahr.">
+              <div class="timeline-arrow" aria-hidden="true"></div>
+              <div class="timeline-ticks" id="timeline-ticks" aria-hidden="true"></div>
+              <div class="timeline-cursor" id="timeline-cursor" aria-hidden="true" hidden></div>
+              <ol id="event-list" class="timeline-events"></ol>
+            </div>
+          </div>
+          <p class="timeline-status" id="timeline-status" role="status" hidden></p>
+          <div class="timeline-outside" id="timeline-outside" hidden>
+            <span>Ausserhalb der Projektion</span>
+            <div id="outside-events"></div>
+          </div>
+          <dl class="timeline-readout" aria-label="Monatsbudget am gewählten Zeitpunkt">
+            <div><dt>Zeitpunkt</dt><dd id="timeline-age"></dd></div>
+            <div><dt>Nettoeinkommen / Monat</dt><dd id="timeline-income"></dd></div>
+            <div><dt>Laufende Ausgaben / Monat</dt><dd id="timeline-expenses"></dd></div>
+            <div><dt>Gehaltswachstum / Jahr</dt><dd id="timeline-growth"></dd></div>
+            <div id="timeline-one-off-row" hidden><dt>Einmalige Zahlungen</dt><dd id="timeline-one-off"></dd></div>
+          </dl>
+          <p class="visually-hidden" id="timeline-announcement" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <aside class="side-column" aria-label="Profil und Anlageplan">
+        <section class="panel profile" aria-labelledby="profile-title">
+          <div class="panel-heading">
+            <h2 id="profile-title">Ausgangslage</h2>
+            <button type="button" class="text-button" id="edit-profile">Bearbeiten</button>
+          </div>
+          <div class="persona">
+            <span class="avatar" id="profile-initial" aria-hidden="true">A</span>
+            <div>
+              <strong id="profile-name"></strong>
+              <p id="profile-description"></p>
+            </div>
+          </div>
+          <dl class="profile-details">
+            <div><dt>Kontostand</dt><dd id="profile-cash"></dd></div>
+            <div><dt>Bestehende Anlagen</dt><dd id="profile-portfolio"></dd></div>
+            <div><dt>Monatliches Nettoeinkommen</dt><dd id="profile-income"></dd></div>
+            <div><dt>Monatliche Ausgaben</dt><dd id="profile-expenses"></dd></div>
+          </dl>
+        </section>
+
+        <section class="panel investment" id="anlageplan" aria-labelledby="plan-title">
+          <div class="panel-heading">
+            <h2 id="plan-title">Dein Anlageplan</h2>
+          </div>
+          <div class="risk">
+            <div class="risk-heading">
+              <label for="risk-slider">Risikobereitschaft</label>
+              <output id="risk-level" for="risk-slider">Ausgewogen</output>
+            </div>
+            <input type="range" id="risk-slider" min="0" max="100" step="5" value="60" aria-describedby="risk-help">
+            <div class="risk-labels" aria-hidden="true"><span>Vorsichtig</span><span>Chancenorientiert</span></div>
+            <p class="visually-hidden" id="risk-help">Der Regler bestimmt den Aktienanteil in der Simulation.</p>
+          </div>
+          <div class="allocation">
+            <div class="allocation-bar" aria-hidden="true"><span id="allocation-equity"></span></div>
+            <div class="allocation-labels">
+              <span><i class="allocation-dot"></i> <strong id="equity-share"></strong> Aktien</span>
+              <span><i class="allocation-dot bond-dot"></i> <strong id="bond-share"></strong> Anleihen</span>
+            </div>
+          </div>
+          <dl class="plan-details">
+            <div><dt>Sparrate im ersten Monat</dt><dd id="monthly-investment"></dd></div>
+            <div><dt>Liquiditätsziel im ersten Monat</dt><dd id="liquidity-target"></dd></div>
+          </dl>
+          <p class="plan-summary" id="plan-summary"></p>
+          <div class="liquidity-notice" id="liquidity-notice" role="status" hidden></div>
+          <div class="assumption-inputs" aria-labelledby="assumption-controls-title">
+            <h3 id="assumption-controls-title">Modellannahmen pro Jahr</h3>
+            <label for="salary-growth">Gehaltswachstum
+              <span><input type="number" id="salary-growth" min="-10" max="20" step="0.1" required> %</span>
+            </label>
+            <label for="inflation">Inflation
+              <span><input type="number" id="inflation" min="-5" max="20" step="0.1" required> %</span>
+            </label>
+            <label for="equity-return">Ø Aktienrendite
+              <span><input type="number" id="equity-return" min="-20" max="25" step="0.1" required> %</span>
+            </label>
+          </div>
+          <button type="button" class="text-button assumptions-button" id="open-assumptions">So rechnet das Modell</button>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="shell site-footer">
+    <span>Financial Twin · Hackathon-Prototyp</span>
+    <span>Fiktive Daten und illustrative Annahmen</span>
+  </footer>
+  </div>
+
+  <dialog id="profile-dialog" aria-labelledby="profile-dialog-title">
+    <form id="profile-form" class="dialog-form">
+      <div class="dialog-heading">
+        <h2 id="profile-dialog-title">Ausgangslage bearbeiten</h2>
+        <button class="close-button" type="button" data-close aria-label="Schliessen">×</button>
+      </div>
+      <p>Verwende für die Demo fiktive Werte.</p>
+      <div class="form-grid">
+        <label>Vorname (optional)<input name="name" maxlength="40" autocomplete="off"></label>
+        <label>Alter<input name="age" type="number" min="18" max="99" required></label>
+        <label class="form-wide">Bisherige Ausbildung
+          <select name="education">
+            <option>Schulabschluss</option>
+            <option>Berufslehre</option>
+            <option>Bachelor</option>
+            <option>Master</option>
+            <option>Promotion</option>
+            <option>Keine Angabe</option>
+          </select>
+        </label>
+        <label>Kontostand (CHF)<input name="cash" type="number" min="0" max="100000000" step="0.01" required></label>
+        <label>Bestehende Anlagen (CHF)<input name="portfolio" type="number" min="0" max="100000000" step="0.01" required></label>
+        <label>Nettoeinkommen / Monat (CHF)<input name="income" type="number" min="0" max="100000000" step="0.01" required></label>
+        <label>Ausgaben / Monat (CHF)<input name="expenses" type="number" min="0" max="100000000" step="0.01" required></label>
+      </div>
+      <label class="checkbox-label" id="clear-events-label"><input type="checkbox" name="clearEvents"> Zeitstrahl beim Speichern leeren</label>
+      <p class="form-error" id="profile-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-secondary" type="button" data-close>Abbrechen</button>
+        <button class="button button-primary" type="submit">Profil speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="event-dialog" aria-labelledby="event-dialog-title">
+    <form id="event-form" class="dialog-form">
+      <div class="dialog-heading">
+        <h2 id="event-dialog-title">Ereignis hinzufügen</h2>
+        <button class="close-button" type="button" data-close aria-label="Schliessen">×</button>
+      </div>
+      <div class="form-grid">
+        <label>Ereignis
+          <select name="type">
+            <option value="study">Studium</option>
+            <option value="apprentice">Berufslehre</option>
+            <option value="gap">Gap Year / Auszeit</option>
+            <option value="marriage">Ehe</option>
+            <option value="move">Umzug</option>
+            <option value="home">Hauskauf</option>
+            <option value="expense">Grössere Ausgabe</option>
+            <option value="children">Kind(er)</option>
+            <option value="retire">Rente</option>
+          </select>
+        </label>
+        <label>Alter bei Beginn<input type="number" name="age" min="18" max="99" required></label>
+        <div id="event-fields" class="form-grid form-wide"></div>
+      </div>
+      <p class="field-help" id="event-help"></p>
+      <p class="form-error" id="event-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button class="text-button remove-button" type="button" id="delete-event" hidden>Ereignis löschen</button>
+        <button class="button button-secondary" type="button" data-close>Abbrechen</button>
+        <button class="button button-primary" type="submit">Ereignis speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="assumptions-dialog" aria-labelledby="assumptions-title">
+    <div class="dialog-form assumptions">
+      <div class="dialog-heading">
+        <h2 id="assumptions-title">Modellannahmen</h2>
+        <button class="close-button" type="button" data-close aria-label="Schliessen">×</button>
+      </div>
+      <p>Die Simulation rechnet monatlich in nominalen CHF. Das Nettovermögen umfasst Kontostand, Anlagen und Immobilienwert abzüglich der Hypothek.</p>
+      <table>
+        <caption>Illustrative durchschnittliche Jahresrenditen</caption>
+        <thead><tr><th scope="col">Anlageklasse</th><th scope="col">Schwach</th><th scope="col">Basis</th><th scope="col">Stark</th></tr></thead>
+        <tbody id="return-table"></tbody>
+      </table>
+      <ul>
+        <li>Der Aktienkurs folgt einem wiederholbaren Beispielpfad mit guten und schlechten Jahren. Über den vollständigen Zwölfjahreszyklus entspricht die Aufzinsung der eingestellten Durchschnittsrendite. Das Band zeigt zwei alternative Annahmen. Der Kontostand verzinst sich im Modell mit 0 %.</li>
+        <li>Das Gehalt steigt in der Erwerbsphase mit der eingestellten Rate. Die Inflation erhöht die laufenden Ausgaben und die in heutigen CHF eingegebenen Ereignisbeträge. Studien- und Renteneinkommen werden an die Inflation gekoppelt. Beim projizierten Nettovermögen steht zusätzlich die Kaufkraft in heutigen CHF.</li>
+        <li>Bei Ehe und Umzug zählen die eingegebenen persönlichen Kosten. Kinder erhöhen die laufenden Ausgaben ab dem Startalter für die gewählte Dauer. Während der Elternzeit gilt der eingestellte Anteil des regulären Lohns.</li>
+        <li>Der Sparplan investiert höchstens 70 % des monatlichen Überschusses, nachdem drei Monatsausgaben und geplante Ausgaben der nächsten 36 Monate berücksichtigt sind.</li>
+        <li>Der eingestellte Aktienanteil gilt für das Startportfolio und jede Einzahlung. Danach entwickeln sich die Positionen entsprechend ihrer Renditen. Im Vergleich ohne Sparplan bleibt das Startportfolio investiert.</li>
+        <li>Beim Hauskauf bleibt der Immobilienwert ab Kauf nominal konstant. Die Hypothek wird gleichmässig getilgt. Zins fällt auf die jeweilige Restschuld an.</li>
+        <li>Bei Unterdeckung verkauft das Modell verfügbare Anlagen. Ein negativer Kontostand erfasst offene Zahlungen. Ein unterfinanzierter Hauskauf wird ausgesetzt.</li>
+        <li>Anlagegebühren und zusätzliche Steuern sind ausgeklammert. Die Ausbildung beeinflusst die vorgeschlagene Studiendauer.</li>
+      </ul>
+      <p class="field-help">Die Ergebnisse zeigen, was unter den gewählten Annahmen passiert. Für die Demo bleiben Eingaben im Speicher dieses Browser-Tabs.</p>
+      <div class="dialog-actions"><button class="button button-primary" type="button" data-close>Schliessen</button></div>
+    </div>
+  </dialog>
+</body>
+</html>
