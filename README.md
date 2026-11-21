@@ -1,2 +1,31 @@
 # Lauzerrrn
 Repo für Falsch und gefälschtes Geld in Lauzern
+
+## Financial Twin engine (`twin/`)
+
+Regime-switching cash-flow SDE + Merton jump-diffusion portfolio + Monte Carlo, calibrated per person from the challenge data.
+
+```bash
+uv sync
+uv run twin P00001 master --years 10 --market standard --strategy ausgewogen --job-loss 0.025
+uv run pytest -q
+uv run streamlit run app.py   # http://localhost:8501  (Spiel + Analyse)
+```
+
+The challenge data is **not** in this repo. By default it is read from `../ai-financial-twin-lauzhack-2026/Data`; override with `TWIN_DATA_DIR`.
+
+- `twin/config.py`: all assumptions with defaults and presets (market, strategy, macro, shortfall rule, shocks, Swiss rules)
+- `twin/calibration.py`: per-person mean and noise, seasonality and month-specific noise per status group
+- `twin/scenarios.py`: life events (study, job, job change, unemployment, self-employment, house purchase, one-off) and presets
+- `twin/engine.py`: monthly simulation, shortfall rule (sell, then cut spending, then credit), metrics, accounting identity check
+- `twin/analysis.py`: tornado sensitivity with common random numbers
+- `app.py`: Streamlit UI (profile, life plan editor, Apollo-13 crisis buttons, fan chart, sensitivity, assumptions)
+- `ui/spiel.py`: game mode "Lebensweg": avatar creator, animated road board, yearly decision cards with twin previews, fate cards
+- `ui/analyse.py`: analysis dashboard
+- `twin/avatar.py`, `twin/game.py`: avatar kit (SVG) and game logic
+
+### YOUR LIFE · YOUR CHOICE (game)
+`uv run streamlit run app.py` opens straight into the game (full screen, everything in-game). Streamlit is only the
+simulation backend: `twin/session.py` (GameSession) produces the payload, `twin/frontend3d/` is the client
+(three.js bundled locally, fonts Lilita One + Nunito under OFL). Contract: `twin/frontend3d/CONTRACT.md`.
+The analysis dashboard is reachable from the title screen ("ANALYSE").
