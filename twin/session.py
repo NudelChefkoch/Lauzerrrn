@@ -14,14 +14,13 @@ from functools import lru_cache
 import numpy as np
 
 from . import game
-from .calibration import calibrate
-from .config import STATE_NAMES, STRATEGY_PRESETS, Assumptions, Strategy
-from .game import (ACHIEVEMENTS, CATS, OPTION_BY_KEY, STAY, YEARS, Ctx, animations, available,
-                   finished_degrees, joy_label, level, snapshot)
+from .calibration import Person, calibrate
+from .config import STATE_NAMES, Assumptions
+from .game import (ACHIEVEMENTS, CATS, NO_STYLE, OPTION_BY_KEY, STAY, STYLE_FROM_MONTH, STYLE_META, YEARS, Ctx,
+                   animations, available, finished_degrees, joy_label, snapshot)
+from .ist_zustand import STATUS_OPTIONS, ist_from_person, person_from_ist
 
 HEIGHT = 860
-XP_PER_LEVEL = 400
-ACHIEVEMENT_XP = 150
 START_JOY = 60
 DISCLAIMER = "Synthetische Daten · keine Prognose · keine Anlageberatung"
 
@@ -47,25 +46,7 @@ def _split_cat(cat: str) -> tuple[str, str, str]:
 
 
 CAT_INFO = {c: _split_cat(c) for c in CATS}          # game.CATS label -> (key, label, emoji)
-
-RISK_META = {"konservativ": ("Konservativ", "🛡️"), "ausgewogen": ("Ausgewogen", "⚖️"), "risky": ("Mutig", "🚀")}
-
-
-def _risk_text(s: Strategy) -> str:
-    months = f"{s.buffer_months:g} {'Monat' if s.buffer_months == 1 else 'Monate'}"
-    return f"{s.equity_share * 100:.0f} % Aktien, {months} Notgroschen"
-
-
-def rarity(xp: int) -> str:
-    if xp <= 50:
-        return "COMMON"
-    if xp <= 90:
-        return "UNCOMMON"
-    if xp <= 140:
-        return "RARE"
-    if xp < 200:
-        return "EPIC"
-    return "LEGENDARY"
+STYLE_DE = {f"style_{k}": v[1] for k, v in STYLE_META.items()}
 
 
 def _f(x) -> float | None:
@@ -94,21 +75,20 @@ def _clean(obj):
 
 
 # ---------------------------------------------------------------- shared simulation cache (across sessions)
+# keyed by the (frozen, hashable) Person, so self-entered Ist-Zustände share the cache like the profiles do
 @lru_cache(maxsize=256)
-def _play(pid: str, events: tuple, a: Assumptions, seed: int, now: int):
-    c = calibrate()
-    return game.play(c.persons[pid], list(events), a, c, seed, now)
+def _play(person: Person, events: tuple, a: Assumptions, seed: int, now: int):
+    return game.play(person, list(events), a, calibrate(), seed, now)
 
 
 @lru_cache(maxsize=4096)
-def _preview(pid: str, events: tuple, key: str, month: int, a: Assumptions, seed: int) -> dict:
-    c = calibrate()
-    snap = snapshot(_play(pid, events, a, seed, month), month)
-    return game.preview(c.persons[pid], list(events), OPTION_BY_KEY[key], snap, a, c, seed)
+def _preview(person: Person, events: tuple, key: str, month: int, a: Assumptions, seed: int) -> dict:
+    snap = snapshot(_play(person, events, a, seed, month), month)
+    return game.preview(person, list(events), OPTION_BY_KEY[key], snap, a, calibrate(), seed)
 
 
 class GameSession:
-    """One player's game. Methods: start, choose, restart, payload, handle."""
+    """One player's game. Methods: start, choose, restart, payload, handle, aktualisiere_mit_daten."""
 
     def __init__(self) -> None:
         self.calib = calibrate()
@@ -122,10 +102,12 @@ class GameSession:
 
     # ------------------------------------------------------------ state helpers
     def _reset_game(self) -> None:
-        self.pid: str | None = None
-        self.risk = "ausgewogen"
+        self.pid: str | None = None             # Beispielprofil, mit dem das Formular vorbefüllt war (oder None)
+        self._person: Person | None = None      # Person aus dem abgefragten Ist-Zustand
+        self.ist: dict | None = None
+        self.style: str | None = None           # gewählter Anlagestil (Option-Key), None = noch nicht gewählt
         self.seed = 0
-        self.assumptions = Assumptions()
+        self.assumptions = Assumptions(strategy=NO_STYLE)
         self.events: list = []
         self.turn = 0
         self.prev_turn = 0
@@ -133,9 +115,8 @@ class GameSession:
         self.badges: dict[int, str] = {}
         self.kids = 0
         self.played: set = set()
-        self.xp = 0
         self.joy = START_JOY
-        self.history: list[dict] = []          # {turn, key, emoji, title, cat, xp, delta}
+        self.history: list[dict] = []          # {turn, key, emoji, title, cat, delta}
         self.anims: list[dict] = []
         self.achieved: set[str] = set()
         self.new_achievements: list[dict] = []
@@ -145,16 +126,16 @@ class GameSession:
         self._payload = None
 
     @property
-    def person(self):
-        return self.calib.persons[self.pid]
+    def person(self) -> Person:
+        return self._person
 
     def _res(self, month: int | None = None):
         month = 12 * self.turn if month is None else month
-        return _play(self.pid, tuple(self.events), self.assumptions, self.seed, month)
+        return _play(self.person, tuple(self.events), self.assumptions, self.seed, month)
 
     def _ctx(self, res, month: int) -> Ctx:
         return Ctx(snapshot(res, month), frozenset(self.done), self.person.age + self.turn, self.kids,
-                   finished_degrees(res.plan, month))
+                   finished_degrees(res.plan, month), self.style)
 
     def _flags(self, res, month: int) -> dict:
         p = res.path0
@@ -163,7 +144,7 @@ class GameSession:
                 "had_credit": bool(np.any(credit_path > 1)), "expenses": self.person.expenses, "joy": self.joy}
 
     def _check_achievements(self) -> None:
-        """Unlock achievements for the current state (+150 XP each); new ones go to ``new_achievements``."""
+        """Unlock achievements for the current state; new ones go to ``new_achievements``."""
         month = 12 * self.turn
         res = self._res(month)
         ctx, flags = self._ctx(res, month), self._flags(res, month)
@@ -171,20 +152,25 @@ class GameSession:
         for a in ACHIEVEMENTS:
             if a.key not in self.achieved and a.test(ctx, flags):
                 self.achieved.add(a.key)
-                self.xp += ACHIEVEMENT_XP
-                self.new_achievements.append({"key": a.key, "emoji": a.emoji, "title": a.title, "xp": ACHIEVEMENT_XP})
+                self.new_achievements.append({"key": a.key, "emoji": a.emoji, "title": a.title})
 
     # ------------------------------------------------------------ actions
-    def start(self, pid: str, avatar: dict | None = None, risk: str = "ausgewogen", seed: int | None = None) -> None:
-        if pid not in self.calib.persons:
-            raise KeyError(f"unknown profile {pid!r}")
-        risk = risk if risk in STRATEGY_PRESETS else "ausgewogen"
+    def start(self, ist: dict | None = None, avatar: dict | None = None, seed: int | None = None,
+              pid: str | None = None) -> None:
+        """Start a game from the Ist-Zustand the player entered (``ist``) – or, as a shortcut, from an example
+        profile ``pid`` taken over unchanged. The investment style is NOT part of the start (chosen later)."""
+        if ist is None:
+            if pid not in self.calib.persons:
+                raise KeyError(f"unknown profile {pid!r}")
+            ist = ist_from_person(self.calib.persons[pid])
         self._reset_game()
         if avatar:
             self.avatar = {**DEFAULT_AVATAR, **{k: v for k, v in avatar.items() if v is not None}}
-        self.pid, self.risk = pid, risk
+        self.ist = dict(ist)
+        self._person = person_from_ist(self.calib, ist, self.avatar.get("name"))
+        self.pid = self._person.profile_id if self._person.profile_id in self.calib.persons else None
         self.seed = int(np.random.default_rng().integers(1_000_000)) if seed is None else int(seed)
-        self.assumptions = Assumptions(strategy=STRATEGY_PRESETS[risk])
+        self.assumptions = Assumptions(strategy=NO_STYLE)
         self.phase = "play"
         self._check_achievements()
         self._changed()
@@ -209,10 +195,11 @@ class GameSession:
             self.badges[self.turn] = opt.emoji
         if key == "child":
             self.kids += 1
-        self.xp += opt.xp
+        if key.startswith("style_"):
+            self.style = key
         self.joy = int(np.clip(self.joy + 3 * opt.joy, 0, 100))
         self.history.append({"turn": self.turn, "key": key, "emoji": opt.emoji, "title": opt.title,
-                             "cat": opt.cat, "xp": opt.xp, "delta": delta})
+                             "cat": opt.cat, "delta": delta})
         self.prev_turn, self.turn = self.turn, self.turn + 1
         new = self._res(12 * self.turn)
         self.anims = animations(new.plan, m0, 12 * self.turn, self.turn, self.played)
@@ -240,10 +227,9 @@ class GameSession:
         self._handled.add(value["nonce"])
         action = value.get("action")
         if action == "start":
-            pid = value.get("pid") or "P00001"
-            if pid not in self.calib.persons:
-                pid = "P00001"
-            self.start(pid, value.get("avatar"), value.get("risk") or "ausgewogen")
+            ist = value.get("ist") if isinstance(value.get("ist"), dict) else None
+            pid = value.get("pid") if value.get("pid") in self.calib.persons else "P00001"
+            self.start(ist, value.get("avatar"), pid=pid)
         elif action == "choose":
             if not self.choose(str(value.get("key", ""))):
                 # rejected move: nothing changes, but bump seq so the client's waiting overlay clears
@@ -258,7 +244,7 @@ class GameSession:
 
     # ------------------------------------------------------------ payload pieces
     def _preview(self, key: str, month: int) -> dict:
-        return _preview(self.pid, tuple(self.events), key, month, self.assumptions, self.seed)
+        return _preview(self.person, tuple(self.events), key, month, self.assumptions, self.seed)
 
     def _delta(self, key: str, month: int) -> float:
         return float(self._preview(key, month)["median"] - self._preview("stay", month)["median"])
@@ -273,14 +259,15 @@ class GameSession:
                 if p.profile_id == "P00001" or per.get(p.status, 0) < 2:
                     picked.append(p); per[p.status] = per.get(p.status, 0) + 1
             young = picked[:9]
+            # example profiles only pre-fill the Ist-Zustand form ("ist"); the player can change every number
             profiles = [{"id": p.profile_id, "name": p.name, "age": p.age,
                          "status_de": STATUS_DE.get(p.status, p.status),
-                         "start_capital": _f(p.cash + p.portfolio - p.debt), "typical_month": _f(p.mu)}
+                         "start_capital": _f(p.cash + p.portfolio - p.debt), "typical_month": _f(p.mu),
+                         "ist": ist_from_person(p)}
                         for p in young]
-            risks = [{"key": k, "title": RISK_META.get(k, (k.title(), "🎯"))[0],
-                      "emoji": RISK_META.get(k, (k.title(), "🎯"))[1], "text": _risk_text(s)}
-                     for k, s in STRATEGY_PRESETS.items()]
-            self._boot = _clean({"profiles": profiles, "risks": risks})
+            statuses = [{"key": k, "label": v} for k, v in STATUS_OPTIONS.items()]
+            self._boot = _clean({"profiles": profiles, "statuses": statuses,
+                                 "ist": profiles[0]["ist"] if profiles else None})
         return self._boot
 
     def _achievements(self) -> list[dict]:
@@ -293,11 +280,9 @@ class GameSession:
                 "life": {"suit": snap.state == 1, "kids": self.kids}, "anims": list(self.anims), "finale": finale}
 
     def _hud(self, snap) -> dict:
-        lv, title, _ = level(self.xp)
-        return {"name": self.avatar.get("name", "Alex"), "age": self.person.age + self.turn, "level": lv,
-                "level_title": title,
-                "xp_in_level": self.xp % XP_PER_LEVEL if lv < len(game.LEVELS) else XP_PER_LEVEL,
-                "xp_per_level": XP_PER_LEVEL, "xp_total": self.xp, "joy": self.joy, "joy_emoji": joy_label(self.joy),
+        return {"name": self.avatar.get("name", "Alex"), "age": self.person.age + self.turn,
+                "style_de": STYLE_DE.get(self.style, "noch offen"),
+                "joy": self.joy, "joy_emoji": joy_label(self.joy),
                 "net_worth": snap.net_worth, "cash": snap.cash, "portfolio": snap.portfolio, "debt": snap.debt,
                 "income": snap.income, "state_de": STATE_DE.get(STATE_NAMES.get(snap.state, "other"), "anderes"),
                 "achievements_got": len(self.achieved), "achievements_total": len(ACHIEVEMENTS)}
@@ -311,11 +296,10 @@ class GameSession:
         for o, reason in opts:
             p = pv.get(o.key)
             cards.append({"key": o.key, "cat": CAT_INFO[o.cat][0], "emoji": o.emoji, "title": o.title, "text": o.text,
-                          "locked": reason, "xp": o.xp, "joy": 3 * o.joy,
+                          "locked": reason, "joy": 3 * o.joy,
                           "delta": None if p is None else p["median"] - base,
                           "median": None if p is None else p["median"], "p5": None if p is None else p["p5"],
-                          "p95": None if p is None else p["p95"], "credit": None if p is None else p["credit"],
-                          "rarity": rarity(o.xp)})
+                          "p95": None if p is None else p["p95"], "credit": None if p is None else p["credit"]})
         cats = []
         for c in CATS:
             key, label, emoji = CAT_INFO[c]
@@ -358,12 +342,15 @@ class GameSession:
         snap = snapshot(res, month)
         ctx, flags = self._ctx(res, month), self._flags(res, month)
         cats, cards = self._cards(ctx, month)
-        return {"turn": self.turn, "K": YEARS, "start_age": self.person.age, "age": self.person.age + self.turn,
+        # the investment style is asked only now (from station 2): point the player to the Geld category
+        ask_style = self.style is None and month >= STYLE_FROM_MONTH
+        return {"focus_cat": CAT_INFO[CATS[5]][0] if ask_style else None,
+                "hint": "📊 Zeit für deinen Anlagestil – wähle ihn unter Geld" if ask_style else None,
+                "turn": self.turn, "K": YEARS, "start_age": self.person.age, "age": self.person.age + self.turn,
                 "hud": self._hud(snap), "world": self._world(snap, False), "categories": cats, "cards": cards,
-                "stay": {"key": STAY.key, "title": STAY.title, "xp": STAY.xp},
+                "stay": {"key": STAY.key, "title": STAY.title},
                 "quests": self._quests(snap, flags["credit"]), "achievements": self._achievements(),
-                "new_achievements": [{"emoji": a["emoji"], "title": a["title"], "xp": a["xp"]}
-                                     for a in self.new_achievements],
+                "new_achievements": [{"emoji": a["emoji"], "title": a["title"]} for a in self.new_achievements],
                 "history": self._history(), "fan": self._fan(res)}
 
     def _end_block(self) -> dict:
@@ -373,23 +360,22 @@ class GameSession:
         p0 = mine.path0
         final = float(p0["net_worth"][-1])
         possible = self._res(0)
-        lazy = _play(self.pid, (), self.assumptions, self.seed, 0)
+        lazy = _play(self.person, (), self.assumptions, self.seed, 0)
         score = int(max(final, 0) / 1000 + self.joy * 5 + len(self.achieved) * 50)
         stars = int(min(5, 1 + score // 300))
         dist = possible.percentiles["net_worth"][:, -1]
         percentile = int(round(float(np.interp(final, dist, [5, 25, 50, 75, 95]))))
         credit_path = p0["cash"] + p0["portfolio"] - p0["liquid"]
-        lv, title, _ = level(self.xp)
         decisions = [h for h in self.history if h["key"] != "stay"]
         rated = [h for h in decisions if h["delta"] is not None]
         best = max(rated, key=lambda h: h["delta"]) if rated else None
         yearly = [12 * i for i in range(YEARS + 1)]
         pct, lazy_pct = possible.percentiles["net_worth"], lazy.percentiles["net_worth"]
         summary = {"name": self.avatar.get("name", "Alex"), "age_end": self.person.age + YEARS, "score": score,
-                   "stars": stars, "level": lv, "level_title": title, "joy": self.joy,
-                   "joy_emoji": joy_label(self.joy), "xp_total": self.xp,
+                   "stars": stars, "joy": self.joy, "joy_emoji": joy_label(self.joy),
+                   "style_de": STYLE_DE.get(self.style, "nie festgelegt"),
                    "choices": [{"age": self.person.age + h["turn"], "emoji": h["emoji"], "title": h["title"],
-                                "cat_label": CAT_INFO[h["cat"]][1], "rarity": rarity(h["xp"]), "xp": h["xp"]}
+                                "cat_label": CAT_INFO[h["cat"]][1], "delta": h["delta"]}
                                for h in decisions],
                    "achievements": self._achievements()}
         facts = {"net_worth": final, "percentile": percentile, "p5": dist[0], "p95": dist[4],
@@ -404,6 +390,29 @@ class GameSession:
                          "now_index": YEARS},
                  "disclaimer": DISCLAIMER}
         return {"world": self._world(snap, True), "summary": summary, "facts": facts}
+
+    # ------------------------------------------------------------ später: neue Daten einlesen
+    def aktualisiere_mit_daten(self, quelle, **kw):
+        """Neue (später entstandene) Monatsdaten einlesen und die Aussagen des Zwillings aktualisieren.
+
+        Noch nirgends aufgerufen. ``quelle``: CSV-Pfad oder DataFrame im Format der Challenge-Daten
+        (siehe ``twin.daten_update``). Die Person wird nachkalibriert und ersetzt; das laufende Spiel
+        beginnt mit dem neuen Stand von vorne (Entscheidungen bleiben nicht erhalten). Gibt das
+        ``Aktualisierung``-Objekt mit alten/neuen Kennzahlen und den Aussagen zurück.
+        """
+        from .daten_update import aktualisiere_aus_daten
+        if self.person is None:
+            raise RuntimeError("erst ein Spiel starten (Ist-Zustand fehlt)")
+        upd = aktualisiere_aus_daten(self.person, quelle, calib=self.calib, assumptions=self.assumptions,
+                                     years=YEARS, seed=self.seed, **kw)
+        avatar, seed, ist = dict(self.avatar), self.seed, dict(self.ist or {})
+        self._reset_game()
+        self.avatar, self.seed, self._person, self.pid = avatar, seed, upd.person, None
+        self.ist = {**ist, **upd.ist}
+        self.phase = "play"
+        self._check_achievements()
+        self._changed()
+        return upd
 
     def payload(self) -> dict:
         """The component args for the current state (cached until the state changes)."""

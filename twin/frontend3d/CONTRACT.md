@@ -41,32 +41,34 @@ Streamlit shows nothing else on the game page. Python is only the simulation bac
   "avatar": { cfg },
   "boot": {
     "profiles": [{"id": "P00001", "name": "Alexia", "age": 20, "status_de": "in Ausbildung",
-                  "start_capital": 8000.0, "typical_month": -1030.9}],
-    "risks": [{"key": "konservativ", "title": "Konservativ", "emoji": "🛡️", "text": "25 % Aktien, 6 Monate Notgroschen"}, ...3]
+                  "start_capital": 8000.0, "typical_month": -1030.9, "ist": { ist }}],
+    "statuses": [{"key": "student", "label": "in Ausbildung"}, {"key": "employed", "label": "angestellt"}, ...],
+    "ist": { ist }          // default pre-fill of the Ist-Zustand form (= first example profile)
   },
   "play": {
     "turn": 3, "K": 15, "start_age": 20, "age": 23,
-    "hud": {"name": "Alex", "age": 23, "level": 2, "level_title": "Durchstarter/in", "xp_in_level": 130,
-            "xp_per_level": 400, "xp_total": 530, "joy": 63, "joy_emoji": "🙂", "net_worth": 3347.0,
+    "focus_cat": "geld" | null,   // set once the investment style is due (station 2+) and not chosen yet
+    "hint": "📊 Zeit für deinen Anlagestil – wähle ihn unter Geld" | null,
+    "hud": {"name": "Alex", "age": 23, "style_de": "noch offen", "joy": 63, "joy_emoji": "🙂", "net_worth": 3347.0,
             "cash": 3347.0, "portfolio": 0.0, "debt": 0.0, "income": 5304.0, "state_de": "angestellt",
             "achievements_got": 4, "achievements_total": 12},
     "world": { worldArgs },
     "categories": [{"key": "bildung", "label": "Bildung", "emoji": "🎓", "color": "#2a78d6", "open": 2}, ...6],
     "cards": [{"key": "bachelor", "cat": "bildung", "emoji": "🎓", "title": "Bachelor", "text": "...",
-               "locked": null, "xp": 100, "joy": 3, "delta": 749054.0, "median": 510409.0, "p5": 389026.0,
-               "p95": 680845.0, "credit": 1.0, "rarity": "RARE"}],
-    "stay": {"key": "stay", "title": "Weiterfahren", "xp": 10},
+               "locked": null, "joy": 3, "delta": 749054.0, "median": 510409.0, "p5": 389026.0,
+               "p95": 680845.0, "credit": 1.0}],
+    "stay": {"key": "stay", "title": "Weiterfahren"},
     "quests": [{"name": "Notgroschen", "current": 8000.0, "target": 12800.0, "by_age": 25, "progress": 0.62, "done": false}],
     "achievements": [{"key": "grad", "emoji": "🎓", "title": "Abschluss geschafft", "got": true}],
-    "new_achievements": [{"emoji": "🐷", "title": "Notgroschen: 3 Monatsausgaben", "xp": 150}],
+    "new_achievements": [{"emoji": "🐷", "title": "Notgroschen: 3 Monatsausgaben"}],
     "history": [{"age": 20, "emoji": "🎓", "title": "Bachelor"}],
     "fan": {"ages": [20, 21, ...35], "past": [8000, ...] , "p5": [...], "p50": [...], "p95": [...], "now_index": 3}
   },
   "end": {
     "world": { worldArgs with "finale": true },
-    "summary": {"name": "Alex", "age_end": 35, "score": 1234, "stars": 4, "level": 5, "level_title": "Legende",
-                "joy": 78, "joy_emoji": "🙂", "xp_total": 2100,
-                "choices": [{"age": 20, "emoji": "🎓", "title": "Bachelor", "cat_label": "Bildung", "rarity": "RARE", "xp": 100}],
+    "summary": {"name": "Alex", "age_end": 35, "score": 1234, "stars": 4, "joy": 78, "joy_emoji": "🙂",
+                "style_de": "Ausgewogen anlegen",
+                "choices": [{"age": 20, "emoji": "🎓", "title": "Bachelor", "cat_label": "Bildung", "delta": 749054.0}],
                 "achievements": [{"key": "grad", "emoji": "🎓", "title": "Abschluss geschafft", "got": true}]},
     "facts": {"net_worth": 640000.0, "percentile": 63, "p5": 400000.0, "p95": 900000.0, "lazy_median": -320000.0,
               "cash": 20000.0, "portfolio": 500000.0, "house_equity": 120000.0, "debt": 0.0, "max_credit": 28000.0,
@@ -77,11 +79,16 @@ Streamlit shows nothing else on the game page. Python is only the simulation bac
 }
 ```
 Only the block matching `phase` is guaranteed (`boot` is always present so the title screen can show the profiles).
-Rarity: COMMON (xp ≤ 50) · UNCOMMON (≤ 90) · RARE (≤ 140) · EPIC (≤ 199) · LEGENDARY (≥ 200).
+No XP, levels or rarities (removed). `ist` = Ist-Zustand form values, all monthly CHF except age:
+`{"basis": "P00001" | null, "age": 24, "status": "employed", "income": 5207, "expenses": 2648, "rent": 1404,
+"cash": 25000, "portfolio": 13540, "debt": 0}`. Unchanged example values → the calibrated profile is used; anything
+else becomes an own person (`twin/ist_zustand.py`).
+The investment style is NOT asked at the start: until the player picks one of the Geld cards `style_konservativ |
+style_ausgewogen | style_risky` (unlocked from station 2) nothing new is invested.
 
 ## JS → Python: `setComponentValue(value)` (dataType json)
 Every value carries a strictly increasing `nonce` (use `Date.now()`); Python ignores a nonce it has already handled.
-- `{"action": "start", "nonce": n, "avatar": {cfg}, "pid": "P00001", "risk": "ausgewogen"}`
+- `{"action": "start", "nonce": n, "avatar": {cfg}, "ist": { ist }}` (`"pid"` alone still works: unchanged example)
 - `{"action": "choose", "nonce": n, "key": "bachelor"}` (or `"stay"`)
 - `{"action": "restart", "nonce": n}` → back to `phase: "boot"`
 - `{"action": "analyse", "nonce": n}` → Python switches to the analysis page
@@ -89,7 +96,7 @@ Every value carries a strictly increasing `nonce` (use `Date.now()`); Python ign
 ## Client screens (all inside the component, nothing in Streamlit)
 1. **Loading** – "YOUR LIFE · YOUR CHOICE" in Lilita One with thick outline + drop shadow, progress bar, rotating tips; ~2–3 s and until fonts + three.js are ready.
 2. **Title** – big title, "SPIELEN" + "ANALYSE" buttons, figure turning on the podium behind.
-3. **Creator** – figure on the podium, big ◀ ▶ beside it, category chips, value plate, name field, 🎲; right panel "START-LEBEN" (profile cards + 3 risk cards); "LOSFAHREN".
-4. **Play** – island full-screen; HUD (name/age, level + XP bar, 💰, joy, 🏆); bottom: 6 category cards (blue header with title, big emoji body, count of open options) – the SELECTED one is shown by recolouring its background/header (no check mark); above it the decision cards of that category (rarity tag, preview chips, 🔒 reason when locked), "WEITERFAHREN" button; side panel with quests, achievements and a small fan chart (canvas). Buttons disabled while `busy`. New achievements → celebration popup.
-5. **Life summary** (end) – "RESULTS" corner tag, "LIFE SUMMARY" heading, dark rows per choice with rarity tag + XP reward tile, score/stars/joy; "WEITER".
+3. **Creator** – figure on the podium, big ◀ ▶ beside it, category chips, value plate, name field, 🎲; right panel "DEIN START" (example chips that pre-fill + Ist-Zustand form: age, situation, income, expenses, rent, cash, investments, debt); "LOSFAHREN".
+4. **Play** – island full-screen; HUD (name/age, 📊 Anlagestil, 💰, joy, 🏆); on `focus_cat` the tray jumps once to that category and shows `hint`; bottom: 6 category cards (blue header with title, big emoji body, count of open options) – the SELECTED one is shown by recolouring its background/header (no check mark); above it the decision cards of that category (category colour, preview chips, 🔒 reason when locked), "WEITERFAHREN" button; side panel with quests, achievements and a small fan chart (canvas). Buttons disabled while `busy`. New achievements → celebration popup.
+5. **Life summary** (end) – "RESULTS" corner tag, "LIFE SUMMARY" heading, dark rows per choice with its 💰 effect tile, score/stars/joy/Anlagestil; "WEITER".
 6. **Financial facts** – big stat tiles, percentile gauge, fan chart with "dein Leben" vs "nur weitergefahren", disclaimer; "NOCHMAL SPIELEN" + "ANALYSE".

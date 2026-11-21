@@ -73,6 +73,8 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
     plan = build_plan(person, events or [], T, calib, a)
     rng = np.random.default_rng(seed)
     st, sh, so, sc = a.strategy, a.shortfall, a.social, a.shocks
+    buf = plan.buffer_months if plan.buffer_months is not None else np.full(T, st.buffer_months)
+    inv = plan.invest_rate if plan.invest_rate is not None else np.full(T, st.invest_rate)
 
     # ----- state per path
     cash = np.full(N, person.cash, dtype=float)
@@ -186,7 +188,7 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
                 ok = ~owns & (cash + port >= need)
                 house_failed |= ~owns & ~ok
                 # pay with cash above the emergency buffer, then portfolio, then the buffer itself
-                free = np.clip(cash - st.buffer_months * expenses, 0, None)
+                free = np.clip(cash - buf[t] * expenses, 0, None)
                 from_free = np.minimum(free, need)
                 from_port = np.minimum(port, need - from_free)
                 from_cash = need - from_port
@@ -237,7 +239,7 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
         # only invest while the expected monthly flow is positive (no invest-then-sell while burning cash)
         saving_phase = (income - spend - plan.extra_cost[t] * P + seas * P) > 0
         invest = np.where((credit <= 0) & (loan <= 0) & saving_phase,
-                          np.clip(cash - st.buffer_months * expenses, 0, None) * st.invest_rate, 0.0)
+                          np.clip(cash - buf[t] * expenses, 0, None) * inv[t], 0.0)
         cash -= invest
         port += invest
 

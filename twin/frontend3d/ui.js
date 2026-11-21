@@ -4,7 +4,6 @@ import { showCreator, setCreator, showWorld } from './engine.js';
 import { OPTIONS, CAT_LABEL, NICE, DEFAULT_CFG, SKINS, HAIRC, COLORS } from './core.js';
 
 /* =================================================================== helpers */
-const RARITY = { COMMON: '#8e9ab3', UNCOMMON: '#2fbf68', RARE: '#2f86ff', EPIC: '#a24bff', LEGENDARY: '#ff9d14' };
 const TIPS = [
   'Früh anfangen lohnt sich: Der Zinseszins liebt Geduld.',
   'Ein Notgroschen von 3–6 Monatsausgaben schützt vor teuren Krediten.',
@@ -38,10 +37,13 @@ const safeColor = (c, d = '#2f7bff') => (typeof c === 'string' && /^#[0-9a-fA-F]
 const nice = v => { const s = NICE[v] || String(v ?? ''); return s.charAt(0).toUpperCase() + s.slice(1); };
 const arr = v => Array.isArray(v) ? v : [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-function rarityOf(r, xp) {
-  const k = String(r || '').toUpperCase(); if (RARITY[k]) return k;
-  const x = num(xp); return x <= 50 ? 'COMMON' : x <= 90 ? 'UNCOMMON' : x <= 140 ? 'RARE' : x < 200 ? 'EPIC' : 'LEGENDARY';
-}
+// Ist-Zustand form (start panel): field, label, kind
+const IST_FIELDS = [
+  ['age', 'Alter', 'int'], ['status', 'Situation', 'status'],
+  ['income', 'Netto-Einkommen / Monat', 'chf'], ['expenses', 'Ausgaben / Monat (alles)', 'chf'],
+  ['rent', 'davon Miete / Monat', 'chf'], ['cash', 'Konto & Bargeld', 'chf'],
+  ['portfolio', 'Anlagen (Wertschriften)', 'chf'], ['debt', 'Schulden / Kredite', 'chf'],
+];
 function profileEmoji(status, i) {
   const s = String(status || '').toLowerCase();
   if (/lehre|ausbildung/.test(s)) return '🧰';
@@ -144,7 +146,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   const stage = document.getElementById('stage');
   const st = {
     screen: null, P: null, sig: null, loaded: false, cfg: { ...DEFAULT_CFG }, touched: false, cat: 'gender',
-    pid: null, risk: null, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
+    ist: null, istBuilt: false, styleHinted: false, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
     busy: false, busySince: 0, waiting: false, waitSeq: -1, waitPhase: null, waitTimer: 0,
     enginePhase: null, celebrated: new Set(), celPending: null,
   };
@@ -189,10 +191,14 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       </div>
     </div>
     <aside class="cr-panel pe">
-      <div class="panel-head"><span class="ol">START-LEBEN</span></div>
+      <div class="panel-head"><span class="ol">DEIN START</span></div>
       <div class="panel-body">
-        <h3 class="sec">1 · Wähle dein Startleben</h3><div class="grid-prof"></div>
-        <h3 class="sec">2 · Wähle deinen Anlagestil</h3><div class="grid-risk"></div>
+        <h3 class="sec">1 · Wo stehst du heute?</h3>
+        <p class="ist-note">Trag deine aktuellen Zahlen ein – oder übernimm ein Beispiel und pass es an.</p>
+        <div class="ist-ex"></div>
+        <h3 class="sec">2 · Dein Ist-Zustand</h3>
+        <div class="ist-form"></div>
+        <p class="ist-note">📊 Deinen Anlagestil wählst du später im Spiel – ab Station 2 unter „Geld“.</p>
       </div>
       <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LOSFAHREN</button></div>
     </aside>
@@ -210,7 +216,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     <div class="tray pe"><div class="tray-head"></div><div class="tray-row"></div></div>
     <div class="busy-pill">🎬 Das Leben passiert …</div>
     <footer class="dock pe"><div class="cats"></div>
-      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>WEITERFAHREN<small class="stayxp">+10 XP</small></button>
+      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>WEITERFAHREN</button>
     </footer>
   </section>
 
@@ -259,9 +265,9 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   const R = {
     loadBar: $('.loadbar i'), loadPct: $('.load-pct'), tip: $('.tip'), tipTxt: $('.tip span'),
     chips: $('.chips'), plateCat: $('.plate-cat'), plateVal: $('.plate-val'), pips: $('.pips'), name: $('#ylyc-name'),
-    prof: $('.grid-prof'), risk: $('.grid-risk'),
+    istEx: $('.ist-ex'), istForm: $('.ist-form'),
     hud: $('.hud'), side: $('.side'), quests: $('.quests'), achs: $('.achs'), achn: $('.achn'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
-    tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'), stayXp: $('.stayxp'),
+    tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'),
     resSub: $('.res-sub'), resStats: $('.res-stats'), resList: $('.res-list'),
     factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'), disclaimer: $('.disclaimer'),
     toasts: $('.toasts'), waitLabel: $('.wlabel'), cel: $('.celebrate'), celList: $('.cel-list'), confetti: $('.confetti'),
@@ -298,7 +304,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       if (st.screen !== 'facts') go('summary');
       renderSummary(); renderFacts();
     } else {
-      st.enginePhase = 'boot';
+      st.enginePhase = 'boot'; st.styleHinted = false;
       if (st.screen === 'loading' || !st.screen) go('title');
       else if (st.screen === 'title' || st.screen === 'creator') renderStartPanel();
       else go('creator');
@@ -374,47 +380,54 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   }
   function renderStartPanel() {
     const boot = (st.P && st.P.boot) || {};
-    const profiles = arr(boot.profiles), risks = arr(boot.risks);
-    if (!profiles.some(p => p.id === st.pid)) st.pid = profiles.length ? profiles[0].id : null;
-    if (!risks.some(r => r.key === st.risk)) {
-      const mid = risks.find(r => r.key === 'ausgewogen') || risks[Math.floor(risks.length / 2)];
-      st.risk = mid ? mid.key : null;
+    const profiles = arr(boot.profiles), statuses = arr(boot.statuses);
+    if (!st.ist && boot.ist) st.ist = { ...boot.ist };
+    R.istEx.innerHTML = profiles.length ? profiles.map((p, i) => `
+      <button class="exchip ${st.ist && st.ist.basis === p.id ? 'on' : ''}" data-act="ex" data-id="${esc(p.id)}"
+        title="${esc(`Start: ${chf(p.start_capital)} · pro Monat: ${chfSigned(p.typical_month)}`)}">
+        <span class="e">${profileEmoji(p.status_de, i)}</span><span><b>${esc(p.name)}${p.age !== undefined && p.age !== null ? ' · ' + num(p.age) : ''}</b><small>${esc(p.status_de || '')}</small></span>
+      </button>`).join('') : '<div class="empty">Beispiele werden geladen …</div>';
+    if (!st.istBuilt && statuses.length) {
+      R.istForm.innerHTML = IST_FIELDS.map(([k, label, kind]) => `
+        <label class="ist-f ${kind === 'status' ? 'wide' : ''}"><span>${esc(label)}</span>${kind === 'status'
+          ? `<select data-ist="${k}">${statuses.map(o => `<option value="${esc(o.key)}">${esc(o.label)}</option>`).join('')}</select>`
+          : `<span class="inp">${kind === 'chf' ? '<i>CHF</i>' : ''}<input data-ist="${k}" type="number" inputmode="numeric" min="${kind === 'int' ? 15 : 0}" max="${kind === 'int' ? 70 : 9999999}" step="${kind === 'int' ? 1 : 50}"></span>`}
+        </label>`).join('');
+      st.istBuilt = true; fillIst();
     }
-    R.prof.innerHTML = profiles.length ? profiles.map((p, i) => `
-      <button class="mcard prof ${p.id === st.pid ? 'sel' : ''}" data-act="pid" data-id="${esc(p.id)}">
-        <div class="mh">${esc(p.name)}${p.age !== undefined && p.age !== null ? ' · ' + num(p.age) : ''}</div>
-        <div class="mb"><div class="emo">${profileEmoji(p.status_de, i)}</div>
-          <div class="meta">${esc(p.status_de || '')}</div>
-          <div class="meta">Start: <b>${chf(p.start_capital)}</b></div>
-          <div class="meta">pro Monat: <b>${chfSigned(p.typical_month)}</b></div></div>
-      </button>`).join('') : '<div class="empty">Startleben werden geladen …</div>';
-    R.risk.innerHTML = risks.length ? risks.map(r => `
-      <button class="mcard risk ${r.key === st.risk ? 'sel' : ''}" data-act="risk" data-k="${esc(r.key)}">
-        <div class="mh">${esc(r.title || r.key)}</div>
-        <div class="mb"><div class="emo">${esc(r.emoji || '📊')}</div><div class="txt">${esc(r.text || '')}</div></div>
-      </button>`).join('') : '<div class="empty">Anlagestile werden geladen …</div>';
+  }
+  function fillIst() {
+    if (!st.ist) return;
+    R.istForm.querySelectorAll('[data-ist]').forEach(el => {
+      const v = st.ist[el.dataset.ist]; if (v !== undefined && v !== null && document.activeElement !== el) el.value = v;
+    });
+  }
+  function readIst() {
+    const out = { ...(st.ist || {}) };
+    R.istForm.querySelectorAll('[data-ist]').forEach(el => {
+      out[el.dataset.ist] = el.tagName === 'SELECT' ? el.value : Math.max(0, num(el.value));
+    });
+    return out;
   }
   function startGame() {
     const name = String(R.name.value || st.cfg.name || '').trim().slice(0, 16) || 'Alex';
     st.cfg = { ...st.cfg, name }; R.name.value = name;
-    act({ action: 'start', avatar: { ...st.cfg }, pid: st.pid, risk: st.risk });
+    st.ist = readIst(); st.styleHinted = false;
+    act({ action: 'start', avatar: { ...st.cfg }, ist: { ...st.ist } });
   }
 
   /* ---------------------------------------------------------------- play */
   function renderPlay() {
     const play = (st.P && st.P.play) || {};
     const h = play.hud || {};
-    const K = num(play.K, 15), turn = num(play.turn), xpPer = Math.max(1, num(h.xp_per_level, 400));
-    const xpPct = clamp(num(h.xp_in_level) / xpPer * 100, 0, 100);
+    const K = num(play.K, 15), turn = num(play.turn);
     const av = (st.P && st.P.avatar) || st.cfg, avCol = safeColor(COLORS[av.color], '#7b4dff');
     const name = h.name || av.name || 'Alex';
     const nw = num(h.net_worth);
     R.hud.innerHTML = `
       <div class="pill name"><span class="av" style="background:${avCol}">${esc(String(name).trim().charAt(0).toUpperCase() || '?')}</span>
         <span class="big">${esc(name)}</span><span class="sub">· ${num(h.age, num(play.age))} J.</span></div>
-      <div class="pill lvl" title="${esc(h.xp_total !== undefined ? grp(h.xp_total) + ' XP gesamt' : '')}"><span class="lvl-badge">${num(h.level, 1)}</span>
-        <div class="xpwrap"><span class="sub"><span class="sub title">${esc(h.level_title || 'Level')} · </span>${grp(h.xp_in_level)}/${grp(xpPer)} XP</span>
-        <div class="xpbar"><i style="width:${xpPct.toFixed(1)}%"></i></div></div></div>
+      <div class="pill style" title="Anlagestil (ab Station 2 unter Geld wählbar)"><span class="ico">📊</span><span class="sub">Anlagestil</span><span class="big">${esc(h.style_de || 'noch offen')}</span></div>
       <div class="pill money" title="Nettovermögen"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
       <div class="pill" title="Lebensfreude"><span class="ico">${esc(h.joy_emoji || '🙂')}</span><span class="big">${Math.round(num(h.joy))}</span></div>
       <div class="pill" title="Erfolge"><span class="ico">🏆</span><span class="big">${num(h.achievements_got)}/${num(h.achievements_total)}</span></div>
@@ -424,14 +437,17 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
 
     // categories
     const cats = arr(play.categories);
+    // the investment style is asked later (from station 2): jump to its category once and say why
+    if (play.focus_cat && !st.styleHinted && cats.some(c => c.key === play.focus_cat)) {
+      st.styleHinted = true; st.selCat = play.focus_cat; st.trayOpen = true;
+      if (play.hint) setTimeout(() => toast(play.hint, 4200), 400);
+    }
     if (!cats.some(c => c.key === st.selCat)) { const f = cats.find(c => num(c.open) > 0) || cats[0]; st.selCat = f ? f.key : null; }
     R.cats.innerHTML = cats.map((c, i) => `
       <button class="mcard cat ${c.key === st.selCat ? 'sel' : ''}" data-act="selcat" data-k="${esc(c.key)}" style="--cc:${safeColor(c.color)}" title="${esc(c.label)} (Taste ${i + 1})">
         <span class="badge ${num(c.open) ? '' : 'zero'}">${num(c.open)}</span>
         <div class="mh">${esc(c.label)}</div><div class="mb"><div class="emo">${esc(c.emoji)}</div></div>
       </button>`).join('');
-    const stay = play.stay || {};
-    R.stayXp.textContent = `+${num(stay.xp, 10)} XP`;
     renderTray(); renderSide(); updateLocks();
   }
   function renderTray() {
@@ -441,14 +457,14 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     const cards = arr(play.cards).filter(c => c.cat === st.selCat).sort((a, b) => (a.locked ? 1 : 0) - (b.locked ? 1 : 0));
     R.trayHead.innerHTML = cat ? `<span class="tray-title ol">${esc(cat.emoji)} ${esc(cat.label)}</span>
       <button class="btn-round sm" data-act="tray" title="Karten ein-/ausklappen">▾</button>` : '';
-    R.trayRow.innerHTML = cards.length ? cards.map((c, i) => decisionCard(c, ageEnd, i)).join('')
+    const color = safeColor(cat && cat.color);
+    R.trayRow.innerHTML = cards.length ? cards.map((c, i) => decisionCard(c, ageEnd, i, color)).join('')
       : `<div class="tray-empty">Hier ist gerade nichts offen – wähle eine andere Kategorie oder fahr weiter.</div>`;
     R.tray.classList.toggle('hide', !st.trayOpen || !cat || st.busy);
   }
-  function decisionCard(c, ageEnd, i) {
-    const r = rarityOf(c.rarity, c.xp), locked = !!c.locked;
+  function decisionCard(c, ageEnd, i, color) {
+    const locked = !!c.locked;
     const chips = [];
-    if (num(c.xp)) chips.push(`<span class="chip2">⭐ +${grp(c.xp)} XP</span>`);
     if (num(c.joy)) chips.push(`<span class="chip2 ${num(c.joy) > 0 ? 'pos' : 'neg'}" title="Lebensfreude">😊 ${signed(c.joy)}</span>`);
     if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Unterschied zu „nur weitergefahren“ mit ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
     if (c.credit !== undefined && c.credit !== null && Number.isFinite(+c.credit)) {
@@ -459,8 +475,8 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Noch gesperrt';
     const foot = locked ? `<div class="lockbox">🔒 ${esc(reason)}</div>`
       : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>WÄHLEN</button>`;
-    return `<div class="dcard ${locked ? 'locked' : ''}" style="--rc:${RARITY[r]};animation-delay:${Math.min(i, 8) * 55}ms">
-      <span class="rtag">${r}</span><div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
+    return `<div class="dcard ${locked ? 'locked' : ''}" style="--rc:${color};animation-delay:${Math.min(i, 8) * 55}ms">
+      <div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
       <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>
       <div class="chips2">${chips.join('')}</div>${proj}${foot}</div>`;
   }
@@ -487,19 +503,19 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderSummary() {
     const end = (st.P && st.P.end) || {}, s = end.summary || {};
     const stars = clamp(Math.round(num(s.stars)), 0, 5);
-    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · Leben bis ${num(s.age_end)} · ${grp(s.xp_total)} XP gesamt`;
+    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · Leben bis ${num(s.age_end)}`;
     R.resStats.innerHTML = `
       <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">Punkte</div></div>
       <div class="stat"><div class="k">Sterne</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} von 5</div></div>
       <div class="stat"><div class="k">Lebensfreude</div><div class="v">${esc(s.joy_emoji || '🙂')} ${Math.round(num(s.joy))}</div><div class="s">von 100</div></div>
-      <div class="stat"><div class="k">Level</div><div class="v">${num(s.level, 1)}</div><div class="s">${esc(s.level_title || '')}</div></div>`;
+      <div class="stat"><div class="k">Anlagestil</div><div class="v">📊</div><div class="s">${esc(s.style_de || 'nie festgelegt')}</div></div>`;
     const ch = arr(s.choices);
     R.resList.innerHTML = ch.length ? ch.map((c, i) => {
-      const r = rarityOf(c.rarity, c.xp);
-      return `<div class="rrow" style="--rc:${RARITY[r]};animation-delay:${Math.min(i, 14) * 70}ms">
-        <span class="rtag">${r}</span><span class="age">${num(c.age)} J.</span><span class="e">${esc(c.emoji || '🃏')}</span>
+      const d = c.delta === undefined || c.delta === null ? null : num(c.delta);
+      return `<div class="rrow" style="animation-delay:${Math.min(i, 14) * 70}ms">
+        <span class="age">${num(c.age)} J.</span><span class="e">${esc(c.emoji || '🃏')}</span>
         <div class="tt"><b>${esc(c.title)}</b><span>${esc(c.cat_label || '')}</span></div>
-        <div class="reward ${r === 'LEGENDARY' ? 'lg' : ''}">⭐ +${grp(c.xp)} XP</div></div>`;
+        <div class="reward ${d !== null && d < 0 ? 'lg' : ''}" title="Unterschied zu „nur weitergefahren“ (Median, Zeitpunkt der Entscheidung)">${d === null ? '–' : '💰 ' + chfShortSigned(d)}</div></div>`;
     }).join('') : '<div class="res-empty">Du bist einfach immer weitergefahren. Auch das ist eine Strategie! 🚗</div>';
   }
   function renderFacts() {
@@ -554,7 +570,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (st.busy && !force) return;                     // setBusy(false) calls us again
     st.celPending = null;
     R.celList.innerHTML = list.map((a, i) => `<div class="cel-item" style="animation-delay:${200 + i * 120}ms"><span class="e">${esc(a.emoji || '🏅')}</span>
-      <span class="t">${esc(a.title)}</span>${num(a.xp) ? `<span class="x">+${grp(a.xp)} XP</span>` : ''}</div>`).join('');
+      <span class="t">${esc(a.title)}</span></div>`).join('');
     const cols = ['#ff3d8b', '#ffd23f', '#2fd27a', '#2f7bff', '#ff8a1f', '#a24bff', '#ffffff'];
     R.confetti.innerHTML = Array.from({ length: 70 }, (_, i) =>
       `<i style="--x:${(Math.random() * 100).toFixed(1)}%;--c:${cols[i % cols.length]};--d:${(2.2 + Math.random() * 2).toFixed(2)}s;--s:${(-Math.random() * 3).toFixed(2)}s;--r:${Math.round(360 + Math.random() * 720)}deg"></i>`).join('');
@@ -608,8 +624,11 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       case 'next': stepOpt(1); break;
       case 'pip': setOpt(+b.dataset.i); break;
       case 'rand': randomize(); break;
-      case 'pid': st.pid = b.dataset.id; renderStartPanel(); break;
-      case 'risk': st.risk = b.dataset.k; renderStartPanel(); break;
+      case 'ex': {
+        const pr = arr(st.P && st.P.boot && st.P.boot.profiles).find(p => p.id === b.dataset.id);
+        if (pr && pr.ist) { st.ist = { ...pr.ist }; fillIst(); renderStartPanel(); }
+        break;
+      }
       case 'start': startGame(); break;
       case 'selcat':
         if (st.selCat === b.dataset.k) st.trayOpen = !st.trayOpen; else { st.selCat = b.dataset.k; st.trayOpen = true; }
@@ -627,6 +646,10 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   });
   R.name.addEventListener('input', () => { st.cfg = { ...st.cfg, name: R.name.value.slice(0, 16) }; st.touched = true; });
   R.name.addEventListener('keydown', ev => { if (ev.key === 'Enter') R.name.blur(); });
+  R.istForm.addEventListener('input', ev => {
+    const el = ev.target.closest('[data-ist]'); if (!el) return;
+    st.ist = readIst();
+  });
   window.addEventListener('keydown', ev => {
     if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
     if (R.cel.classList.contains('on') && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { closeCelebration(); ev.preventDefault(); return; }

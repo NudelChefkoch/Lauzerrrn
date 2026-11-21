@@ -91,6 +91,8 @@ class StrategyChange:
     start: int
     equity_share: float                    # new share of equities in the portfolio from this month on
     label: str = "Strategie"
+    buffer_months: float | None = None     # new emergency buffer in months of expenses (None = unchanged)
+    invest_rate: float | None = None       # new share of cash above the buffer invested monthly (None = unchanged)
 
 
 Event = (Study | Job | JobChange | Unemployment | SelfEmployment | HouseBuy | OneOff
@@ -110,6 +112,8 @@ class Plan:
     labels: list[tuple[int, str]] = field(default_factory=list)
     crashes: list[MarketCrash] = field(default_factory=list)
     equity_share: np.ndarray | None = None   # equity share per month
+    buffer_months: np.ndarray | None = None  # emergency buffer (months of expenses) per month
+    invest_rate: np.ndarray | None = None    # share of cash above the buffer invested, per month
 
 
 def build_plan(person: Person, events: list[Event], months: int,
@@ -123,6 +127,8 @@ def build_plan(person: Person, events: list[Event], months: int,
     houses: list[HouseBuy] = []
     crashes: list[MarketCrash] = []
     equity = np.full(T, a.strategy.equity_share)
+    buffer = np.full(T, a.strategy.buffer_months, dtype=float)
+    invest = np.full(T, a.strategy.invest_rate, dtype=float)
     labels: list[tuple[int, str]] = []
     g = a.macro.career_growth
 
@@ -189,11 +195,16 @@ def build_plan(person: Person, events: list[Event], months: int,
             crashes.append(ev)
         elif isinstance(ev, StrategyChange):
             equity[t0:] = ev.equity_share
+            if ev.buffer_months is not None:
+                buffer[t0:] = ev.buffer_months
+            if ev.invest_rate is not None:
+                invest[t0:] = ev.invest_rate
         else:  # pragma: no cover
             raise TypeError(f"unknown event {ev!r}")
 
     alv_base = np.where(state == EMPLOYED, income, 0.0)
-    return Plan(T, state, income, alv_applies, alv_base, extra_cost, extra_exp, houses, labels, crashes, equity)
+    return Plan(T, state, income, alv_applies, alv_base, extra_cost, extra_exp, houses, labels, crashes, equity,
+                buffer, invest)
 
 
 # ---------------------------------------------------------------- presets

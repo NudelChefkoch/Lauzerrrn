@@ -2,7 +2,9 @@
 
 * Decisions are grouped by category; locked options show why (e.g. "Eigenkapital fehlt").
 * Every card shows the twin's preview (median net worth at the end, range, credit risk).
-* XP, levels, happiness meter, achievements and quests make the trade-offs tangible.
+* Happiness meter, achievements and quests make the trade-offs tangible (no XP / levels).
+* The investment style is NOT asked at the start: until the player picks one (from station 2, category
+  Geld) nothing new is invested; the existing portfolio stays as it is.
 * The played life is path 0 of the Monte Carlo run; ``fixed_until`` makes all other paths share
   its past, so the fan always shows the futures still possible from where the player stands.
 """
@@ -12,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .calibration import Calibration, Person
-from .config import Assumptions, EMPLOYED, SELF_EMPLOYED, STUDENT, UNEMPLOYED
+from .config import Assumptions, EMPLOYED, SELF_EMPLOYED, STRATEGY_PRESETS, STUDENT, UNEMPLOYED, Strategy
 from .engine import Result, simulate
 from .scenarios import (Event, ExpenseChange, HouseBuy, Job, JobChange, OneOff, SelfEmployment, StrategyChange,
                         Study)
@@ -49,6 +51,7 @@ class Ctx:
     age: int
     kids: int
     finished: frozenset[str]     # completed degrees: "bachelor", "master", "lehre"
+    style: str | None = None     # chosen investment style (option key), None = not decided yet
 
 
 # ---------------------------------------------------------------- decision cards
@@ -62,7 +65,6 @@ class Option:
     make: Callable[[int, Snapshot], list[Event]]
     lock: Callable[[Ctx], str | None] = lambda c: None   # None = available, else reason
     joy: int = 0
-    xp: int = 50
     once: bool = True
 
 
@@ -98,71 +100,94 @@ OPTIONS: list[Option] = [
     # ---- Bildung
     Option("bachelor", CATS[0], "🎓", "Bachelor", "3 Jahre Uni, CHF 1'500 Gebühren/Jahr. Danach Einstieg mit CHF 5'200.",
            lambda t, s: [Study(t, 36, 1500, None, 5200, 800, "Bachelor", "Bachelor-Abschluss")],
-           lambda c: "Schon gemacht" if {"bachelor", "lehre"} & c.done else None, joy=1, xp=100),
+           lambda c: "Schon gemacht" if {"bachelor", "lehre"} & c.done else None, joy=1),
     Option("master", CATS[0], "🎓", "Master", "2 Jahre, CHF 1'500/Jahr. Danach Einstieg mit CHF 6'300.",
            lambda t, s: [Study(t, 24, 1500, None, 6300, 1000, "Master", "Master-Abschluss")],
            lambda c: None if "bachelor" in c.finished and "master" not in c.done else
-           ("Schon gemacht" if "master" in c.done else "Erst Bachelor abschliessen"), joy=1, xp=120),
+           ("Schon gemacht" if "master" in c.done else "Erst Bachelor abschliessen"), joy=1),
     Option("lehre", CATS[0], "🛠️", "Lehre", "3 Jahre, Lehrlingslohn CHF 900. Danach Fachkraft mit CHF 5'000.",
            lambda t, s: [Study(t, 36, 0, 900, 5000, 600, "Lehre", "Lehrabschluss")],
-           lambda c: "Schon gemacht" if {"bachelor", "lehre"} & c.done else ("Nur bis 25" if c.age > 25 else None), joy=1, xp=100),
+           lambda c: "Schon gemacht" if {"bachelor", "lehre"} & c.done else ("Nur bis 25" if c.age > 25 else None), joy=1),
     # ---- Karriere
     Option("job_start", CATS[1], "🛒", "Einstiegsjob", "Sofort Geld verdienen: CHF 4'300 netto, eigene Wohnung +CHF 800/Monat.",
-           lambda t, s: [Job(t, 4300, 800, "Job: Einstieg")], _job_lock(None), joy=0, xp=60),
+           lambda t, s: [Job(t, 4300, 800, "Job: Einstieg")], _job_lock(None), joy=0),
     Option("job_office", CATS[1], "🏢", "Bürojob", "CHF 5'800 netto. Braucht Bachelor oder Lehre.",
-           lambda t, s: [Job(t, 5800, 900, "Job: Büro")], _job_lock("abschluss"), joy=0, xp=80),
+           lambda t, s: [Job(t, 5800, 900, "Job: Büro")], _job_lock("abschluss"), joy=0),
     Option("job_tech", CATS[1], "💻", "Tech-Job", "CHF 7'400 netto. Braucht einen Master.",
-           lambda t, s: [Job(t, 7400, 1000, "Job: Tech")], _job_lock("master"), joy=1, xp=100),
+           lambda t, s: [Job(t, 7400, 1000, "Job: Tech")], _job_lock("master"), joy=1),
     Option("switch", CATS[1], "🚀", "Jobwechsel", "+15 % Lohn, 1 Monat ohne Einkommen dazwischen.",
            lambda t, s: [JobChange(t, 0.15, 1, "Jobwechsel")],
-           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=0, xp=70, once=False),
+           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=0, once=False),
     Option("course", CATS[1], "📚", "Weiterbildung", "CHF 12'000 jetzt, in 18 Monaten +20 % Lohn.",
            lambda t, s: [OneOff(t, 12_000, "Weiterbildung"), JobChange(t + 18, 0.20, 0, "Beförderung")],
-           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=-1, xp=90),
+           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=-1),
     Option("startup", CATS[1], "💡", "Startup gründen", "CHF 20'000 Startkapital, Einkommen ~CHF 6'000, stark schwankend.",
            lambda t, s: [SelfEmployment(t, 6000, 20_000, "Startup")],
-           lambda c: None if c.snap.state == EMPLOYED else "Erst Berufserfahrung sammeln", joy=2, xp=120),
+           lambda c: None if c.snap.state == EMPLOYED else "Erst Berufserfahrung sammeln", joy=2),
     Option("parttime", CATS[1], "⏳", "Teilzeit 80 %", "20 % weniger Lohn, mehr Freizeit.",
            lambda t, s: [JobChange(t, -0.20, 0, "Teilzeit")],
-           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=2, xp=40),
+           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=2),
     # ---- Wohnen
     Option("flat", CATS[2], "🛋️", "Schönere Wohnung", "+CHF 600 Miete pro Monat.",
            lambda t, s: [ExpenseChange(t, 600, "Neue Wohnung")],
-           lambda c: None if c.snap.state in (EMPLOYED, SELF_EMPLOYED) else "Erst ein festes Einkommen", joy=2, xp=40),
+           lambda c: None if c.snap.state in (EMPLOYED, SELF_EMPLOYED) else "Erst ein festes Einkommen", joy=2),
     Option("buy_flat", CATS[2], "🏢", "Eigentumswohnung", "CHF 550'000 – 20 % Eigenkapital, Hypothek 2 %.",
-           lambda t, s: [HouseBuy(t, 550_000, "Kauf: Wohnung")], _house(550_000), joy=3, xp=200),
+           lambda t, s: [HouseBuy(t, 550_000, "Kauf: Wohnung")], _house(550_000), joy=3),
     Option("buy_house", CATS[2], "🏡", "Haus mit Garten", "CHF 850'000 – 20 % Eigenkapital, Hypothek 2 %.",
-           lambda t, s: [HouseBuy(t, 850_000, "Kauf: Haus")], _house(850_000), joy=4, xp=250),
+           lambda t, s: [HouseBuy(t, 850_000, "Kauf: Haus")], _house(850_000), joy=4),
     Option("car", CATS[2], "🚙", "Eigenes Auto", "CHF 25'000 und +CHF 350/Monat Unterhalt.",
            lambda t, s: [OneOff(t, 25_000, "Autokauf"), ExpenseChange(t, 350, "Autokosten")],
-           lambda c: None if c.snap.state in (EMPLOYED, SELF_EMPLOYED) else "Erst ein festes Einkommen", joy=2, xp=40),
+           lambda c: None if c.snap.state in (EMPLOYED, SELF_EMPLOYED) else "Erst ein festes Einkommen", joy=2),
     # ---- Familie
     Option("wedding", CATS[3], "💍", "Hochzeit", "Fest für CHF 20'000.",
-           lambda t, s: [OneOff(t, 20_000, "Hochzeit")], lambda c: None if c.age >= 22 else "Ab 22", joy=4, xp=150),
+           lambda t, s: [OneOff(t, 20_000, "Hochzeit")], lambda c: None if c.age >= 22 else "Ab 22", joy=4),
     Option("child", CATS[3], "👶", "Kind bekommen", "CHF 3'000 Geburt, danach +CHF 1'100/Monat (nach Kinderzulage).",
            lambda t, s: [OneOff(t, 3000, "Kind"), ExpenseChange(t, 1100, "Kinderkosten")],
            lambda c: "Ab 22" if c.age < 22 else ("Maximal 2 Kinder im Spiel" if c.kids >= 2 else None),
-           joy=5, xp=200, once=False),
+           joy=5, once=False),
     # ---- Auszeit
     Option("travel", CATS[4], "🌍", "Weltreise", "3 Monate reisen für CHF 7'000.",
-           lambda t, s: [OneOff(t, 7000, "Weltreise")], joy=4, xp=80),
+           lambda t, s: [OneOff(t, 7000, "Weltreise")], joy=4),
     Option("sabbatical3", CATS[4], "🏝️", "Auszeit 3 Monate", "3 Monate ohne Lohn, danach gleicher Job.",
            lambda t, s: [JobChange(t, 0.0, 3, "Auszeit")],
-           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=3, xp=60, once=False),
+           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=3, once=False),
     Option("sabbatical12", CATS[4], "🏖️", "Sabbatjahr", "12 Monate ohne Lohn, danach gleicher Job.",
            lambda t, s: [JobChange(t, 0.0, 12, "Auszeit")],
-           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=6, xp=100),
+           lambda c: None if c.snap.state == EMPLOYED else "Nur mit Job", joy=6),
     # ---- Geld
     Option("frugal", CATS[5], "🥦", "Sparsamer leben", "CHF 300 weniger Ausgaben pro Monat.",
-           lambda t, s: [ExpenseChange(t, -300, "Sparsamer")], joy=-1, xp=40, once=False),
-    Option("risk_up", CATS[5], "📈", "Mehr Risiko", "Portfolio zu 100 % in Aktien.",
-           lambda t, s: [StrategyChange(t, 1.0, "100 % Aktien")],
-           lambda c: None if c.snap.portfolio > 1000 else "Erst investieren (Portfolio > CHF 1'000)", joy=0, xp=40, once=False),
-    Option("risk_down", CATS[5], "🛡️", "Weniger Risiko", "Portfolio zu 25 % in Aktien.",
-           lambda t, s: [StrategyChange(t, 0.25, "25 % Aktien")],
-           lambda c: None if c.snap.portfolio > 1000 else "Erst investieren (Portfolio > CHF 1'000)", joy=0, xp=40, once=False),
+           lambda t, s: [ExpenseChange(t, -300, "Sparsamer")], joy=-1, once=False),
 ]
-STAY = Option("stay", "", "🛣️", "Weiterfahren", "Nichts ändern.", lambda t, s: [], joy=0, xp=10, once=False)
+
+# ---- Anlagestil: erst ab Station 2 wählbar (am Anfang wird nur der Ist-Zustand abgefragt)
+# Bis zur Wahl gilt NO_STYLE: nichts Neues investieren, das vorhandene Portfolio bleibt stehen.
+NO_STYLE = Strategy(equity_share=STRATEGY_PRESETS["ausgewogen"].equity_share, buffer_months=3.0, invest_rate=0.0)
+STYLE_FROM_MONTH = 12
+STYLE_META = {"konservativ": ("🛡️", "Vorsichtig anlegen"), "ausgewogen": ("⚖️", "Ausgewogen anlegen"),
+              "risky": ("🚀", "Mutig anlegen")}
+
+
+def _style_option(preset: str) -> Option:
+    s = STRATEGY_PRESETS[preset]
+    emoji, title = STYLE_META[preset]
+    key = f"style_{preset}"
+    months = f"{s.buffer_months:g} {'Monat' if s.buffer_months == 1 else 'Monate'}"
+
+    def lock(c: Ctx) -> str | None:
+        if c.snap.month < STYLE_FROM_MONTH:
+            return "Ab Station 2 – erst mal ankommen"
+        return "Dein aktueller Anlagestil" if c.style == key else None
+
+    return Option(key, CATS[5], emoji, title,
+                  f"Ab jetzt {s.equity_share * 100:.0f} % Aktien, {months} Notgroschen, Rest wird monatlich investiert.",
+                  lambda t, snap: [StrategyChange(t, s.equity_share, f"Anlagestil: {title}", s.buffer_months,
+                                                  s.invest_rate)],
+                  lock, joy=0, once=False)
+
+
+STYLE_OPTIONS = [_style_option(k) for k in ("konservativ", "ausgewogen", "risky")]
+OPTIONS += STYLE_OPTIONS
+STAY = Option("stay", "", "🛣️", "Weiterfahren", "Nichts ändern.", lambda t, s: [], joy=0, once=False)
 OPTION_BY_KEY = {o.key: o for o in OPTIONS + [STAY]}
 
 
@@ -226,14 +251,6 @@ def finished_degrees(plan, month: int) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------- gamification
-LEVELS = ["Neuling", "Durchstarter/in", "Profi", "Finanz-Ass", "Legende"]
-
-
-def level(xp: int) -> tuple[int, str, float]:
-    lv = min(xp // 400, len(LEVELS) - 1)
-    return lv + 1, LEVELS[lv], (xp % 400) / 400 if lv < len(LEVELS) - 1 else 1.0
-
-
 @dataclass(frozen=True)
 class Achievement:
     key: str

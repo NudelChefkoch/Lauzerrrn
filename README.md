@@ -23,9 +23,14 @@ The challenge data is **not** in this repo. By default it is read from `../ai-fi
 - `ui/spiel.py`: game mode "Lebensweg": avatar creator, animated road board, yearly decision cards with twin previews, fate cards
 - `ui/analyse.py`: analysis dashboard
 - `twin/avatar.py`, `twin/game.py`: avatar kit (SVG) and game logic
+- `twin/ist_zustand.py`: the game starts by asking the current state (Ist-Zustand); example profiles only pre-fill the form
+- `twin/daten_update.py`: `aktualisiere_aus_daten(person, csv)` reads later monthly data, recalibrates mu/sigma and the
+  current balances, and recomputes the twin's statements (old → new). Not wired into the UI yet
+  (`GameSession.aktualisiere_mit_daten` is the hook)
 
 ### YOUR LIFE · YOUR CHOICE (game)
 `uv run streamlit run app.py` opens straight into the game (full screen, everything in-game). Streamlit is only the
 simulation backend: `twin/session.py` (GameSession) produces the payload, `twin/frontend3d/` is the client
 (three.js bundled locally, fonts Lilita One + Nunito under OFL). Contract: `twin/frontend3d/CONTRACT.md`.
 The analysis dashboard is reachable from the title screen ("ANALYSE").
+No XP/levels. The investment style (risk) is not asked at the start but from station 2 in the Geld category.
