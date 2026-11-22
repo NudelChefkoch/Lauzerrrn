@@ -112,6 +112,14 @@ def calibrate(months: int | None = None) -> Calibration:
     mult = mult.div(mult.loc[:, [m for m in range(1, 13) if m not in SPECIAL_MONTHS]].mean(axis=1), axis=0)
 
     mu = cb.groupby("profile_id")["net_transactions_chf"].agg(["mean", "std", "count"])
+    # mu_j = mean of the DESEASONALISED flow X - a_{s,m}. With all 24 months every calendar month appears twice and
+    # this equals the plain mean; with a cut-off (``months``, e.g. 18 = Jan..Jun twice, Jul..Dec once) the plain mean
+    # would carry the seasonal pattern of the over-represented months (employed: about -67 CHF/month, because only
+    # one December bonus is in the window). The residuals r, sigma and k are unaffected (constant shift per group).
+    # Only applied with a cut-off, so the default calibration stays bit-identical (the 24-month means agree to 1e-12).
+    if months is not None:
+        xs = cb["net_transactions_chf"].to_numpy() - seasonal.to_numpy()[rows, cb["m"].to_numpy() - 1]
+        mu["mean"] = pd.Series(xs, index=cb.index).groupby(cb["profile_id"]).mean()
     port = assets[assets.asset_type == "investment_portfolio"].groupby("profile_id")["value_chf"].sum()
     debt = liab.groupby("profile_id").agg(principal=("opening_principal_chf", "sum"),
                                           rate=("annual_interest_rate", "mean"))

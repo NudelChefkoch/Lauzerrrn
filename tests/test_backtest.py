@@ -57,3 +57,13 @@ def test_card_html():
     assert "Part-time" in html and "Employed" in html and "\n" not in html.split("</style>")[-1]
     assert "<script" not in backtest_card_html({"n_profiles": 1, "coverage_90": 0.5,
                                                 "by_status": {"<script>": {"n": 1, "coverage_90": 0.5}}})
+
+
+def test_cutoff_mu_is_deseasonalised():
+    """Months 1..18 contain Jan..Jun twice but only one December: the cut-off fit must remove the seasonal pattern
+    from mu, else employed mu would be about one December bonus / 18 too low."""
+    full, cut = calibrate(), calibrate(months=18)
+    emp = [pid for pid, p in full.persons.items() if p.status == "employed"]
+    shift = np.mean([cut.persons[pid].mu - full.persons[pid].mu for pid in emp])
+    naive = full.states[1].seasonal[:6].sum() / 18                # bias of the plain 18-month mean
+    assert naive < -40 and abs(shift) < abs(naive) / 2
