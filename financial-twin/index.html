@@ -7,106 +7,12 @@
   <meta name="theme-color" content="#f7f7f4">
   <title>Financial Twin · UBS Challenge</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="game.css">
   <script defer src="model.js"></script>
   <script defer src="chart.js"></script>
   <script defer src="timeline.js"></script>
   <script defer src="app.js"></script>
-  <script defer src="story.js"></script>
-  <script defer src="scenes.js"></script>
-  <script defer src="coach.js"></script>
-  <script defer src="game.js"></script>
 </head>
 <body>
-  <div id="game-view">
-    <header class="site-header game-header">
-      <div class="shell header-inner">
-        <a class="brand" href="#" aria-label="Financial Twin, Lebensspiel">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span>Financial Twin<small>UBS CHALLENGE · LAUZHACK</small></span>
-        </a>
-        <div class="game-header-actions">
-          <button type="button" id="coach-jump" class="button button-subtle" hidden>Zum Zwilling-Chat</button>
-          <button type="button" id="open-dashboard" class="button button-subtle">Dashboard öffnen</button>
-        </div>
-      </div>
-    </header>
-    <main class="shell game-shell">
-      <div class="game-heading">
-        <h1 id="game-title">Spiel dein Leben<span class="headline-dot">.</span></h1>
-        <p id="game-description">Gestalte deinen digitalen Zwilling und probiere aus, wohin deine Entscheidungen führen.</p>
-      </div>
-      <nav id="chapter-nav" class="chapter-nav" aria-label="Lebenskapitel" hidden></nav>
-      <div class="game-layout">
-        <div class="game-story-column">
-        <section class="scene-card" aria-labelledby="scene-title">
-          <div class="scene-image">
-            <canvas id="life-scene" aria-hidden="true"></canvas>
-            <div class="scene-banner"><span id="scene-place">Heute</span><strong id="scene-age">20 Jahre</strong></div>
-          </div>
-          <div class="scene-caption">
-            <div><h2 id="scene-title">Lerne deinen Zwilling kennen</h2><p id="scene-text"></p></div>
-            <button type="button" class="button button-secondary" id="skip-animation" hidden>Überspringen</button>
-          </div>
-          <div class="scene-budget" id="chapter-budget" hidden></div>
-        </section>
-        <section class="panel coach-panel" id="coach-panel" aria-labelledby="coach-title" hidden>
-          <div class="coach-heading">
-            <span class="avatar" id="coach-initial" aria-hidden="true">Z</span>
-            <div>
-              <h2 id="coach-title">Zwilling-Chat</h2>
-              <p id="coach-state">Ich schaue mir deinen Lebensweg an.</p>
-            </div>
-            <button class="text-button" id="coach-toggle" type="button" aria-expanded="true" aria-controls="coach-conversation">Einklappen</button>
-          </div>
-          <div id="coach-conversation">
-            <ol id="coach-thread" class="coach-thread" role="log" aria-label="Gespräch mit deinem Zwilling"></ol>
-            <p class="coach-progress" id="coach-progress" role="status" hidden></p>
-            <div id="coach-prompts" class="coach-prompts" aria-label="Mögliche Nachrichten"></div>
-            <form id="coach-form" class="coach-composer">
-              <label class="visually-hidden" for="coach-message">Deine Nachricht an den Zwilling</label>
-              <textarea id="coach-message" rows="2" maxlength="400" required placeholder="Antworte deinem Zwilling oder stelle eine Frage …"></textarea>
-              <button type="submit" id="coach-send" class="button button-primary">Senden</button>
-            </form>
-          </div>
-        </section>
-        </div>
-        <section class="panel game-panel" id="game-panel" aria-label="Spielentscheidungen">
-          <form id="avatar-form">
-            <h2>Gestalte deinen Zwilling</h2>
-            <div class="form-grid avatar-fields">
-              <label>Name<input name="name" value="Alexia" maxlength="40" autocomplete="off"></label>
-              <label>Startalter<input name="age" value="20" type="number" min="18" max="99" required></label>
-              <label>Hautton<select name="skin"><option value="0">Hell</option><option value="1" selected>Warm</option><option value="2">Braun</option><option value="3">Dunkel</option></select></label>
-              <label>Frisur<select name="hair"><option value="0">Kurz</option><option value="1" selected>Lockig</option><option value="2">Lang</option></select></label>
-              <label class="form-wide">Kleidung<select name="outfit"><option value="0">Kaminrot</option><option value="1">Tannengrün</option><option value="2">Indigoblau</option><option value="3">Ocker</option></select></label>
-            </div>
-            <details class="start-finances">
-              <summary>Finanzielle Ausgangslage</summary>
-              <div class="form-grid">
-                <label class="form-wide">Bisherige Ausbildung<select name="education"><option>Schulabschluss</option><option>Berufslehre</option><option>Bachelor</option><option>Master</option><option>Promotion</option><option>Keine Angabe</option></select></label>
-                <label>Kontostand (CHF)<input name="cash" type="number" min="0" max="100000000" value="8000" step="0.01" required></label>
-                <label>Bestehende Anlagen (CHF)<input name="portfolio" type="number" min="0" max="100000000" value="0" step="0.01" required></label>
-                <label>Nettoeinkommen / Monat (CHF)<input name="income" type="number" min="0" max="100000000" value="4200" step="0.01" required></label>
-                <label>Ausgaben / Monat (CHF)<input name="expenses" type="number" min="0" max="100000000" value="3000" step="0.01" required></label>
-              </div>
-            </details>
-            <div class="game-actions">
-              <button type="submit" class="button button-primary">Leben spielen</button>
-              <button type="button" class="button button-secondary" id="alexia-demo">Demo mit Alexia</button>
-            </div>
-          </form>
-          <div id="game-interaction" hidden></div>
-        </section>
-      </div>
-    </main>
-    <footer class="shell site-footer">
-      <span>Financial Twin · Hackathon-Prototyp</span>
-      <span>Fiktive Daten und illustrative Annahmen</span>
-    </footer>
-  </div>
-
-  <div id="dashboard-view" hidden>
   <header class="site-header">
     <div class="shell header-inner">
       <a class="brand" href="#uebersicht" aria-label="Financial Twin, Übersicht">
@@ -114,7 +20,6 @@
         <span>Financial Twin<small>UBS CHALLENGE · LAUZHACK</small></span>
       </a>
       <nav aria-label="Hauptnavigation">
-        <button class="text-button" type="button" id="back-to-game">Zum Lebensspiel</button>
         <a href="#uebersicht">Übersicht</a>
         <a href="#zeitstrahl">Zeitstrahl</a>
         <a href="#anlageplan">Anlageplan</a>
@@ -170,7 +75,6 @@
             <div class="segmented" role="group" aria-label="Vergleich im Diagramm">
               <button type="button" id="compare-investments" aria-pressed="true">Sparplan</button>
               <button type="button" id="compare-events" aria-pressed="false">Lebensereignisse</button>
-              <button type="button" id="compare-paths" aria-pressed="false" hidden>Zwei Lebenswege</button>
             </div>
             <label class="band-toggle"><input id="show-range" type="checkbox" checked> Renditeband</label>
           </div>
@@ -290,7 +194,6 @@
     <span>Financial Twin · Hackathon-Prototyp</span>
     <span>Fiktive Daten und illustrative Annahmen</span>
   </footer>
-  </div>
 
   <dialog id="profile-dialog" aria-labelledby="profile-dialog-title">
     <form id="profile-form" class="dialog-form">
@@ -336,10 +239,7 @@
         <label>Ereignis
           <select name="type">
             <option value="study">Studium</option>
-            <option value="apprentice">Berufslehre</option>
             <option value="gap">Gap Year / Auszeit</option>
-            <option value="marriage">Ehe</option>
-            <option value="move">Umzug</option>
             <option value="home">Hauskauf</option>
             <option value="expense">Grössere Ausgabe</option>
             <option value="children">Kind(er)</option>
@@ -374,7 +274,7 @@
       <ul>
         <li>Der Aktienkurs folgt einem wiederholbaren Beispielpfad mit guten und schlechten Jahren. Über den vollständigen Zwölfjahreszyklus entspricht die Aufzinsung der eingestellten Durchschnittsrendite. Das Band zeigt zwei alternative Annahmen. Der Kontostand verzinst sich im Modell mit 0 %.</li>
         <li>Das Gehalt steigt in der Erwerbsphase mit der eingestellten Rate. Die Inflation erhöht die laufenden Ausgaben und die in heutigen CHF eingegebenen Ereignisbeträge. Studien- und Renteneinkommen werden an die Inflation gekoppelt. Beim projizierten Nettovermögen steht zusätzlich die Kaufkraft in heutigen CHF.</li>
-        <li>Bei Ehe und Umzug zählen die eingegebenen persönlichen Kosten. Kinder erhöhen die laufenden Ausgaben ab dem Startalter für die gewählte Dauer. Während der Elternzeit gilt der eingestellte Anteil des regulären Lohns.</li>
+        <li>Kinder erhöhen die monatlichen Ausgaben ab dem gewählten Startalter bis zum Ende der Projektion.</li>
         <li>Der Sparplan investiert höchstens 70 % des monatlichen Überschusses, nachdem drei Monatsausgaben und geplante Ausgaben der nächsten 36 Monate berücksichtigt sind.</li>
         <li>Der eingestellte Aktienanteil gilt für das Startportfolio und jede Einzahlung. Danach entwickeln sich die Positionen entsprechend ihrer Renditen. Im Vergleich ohne Sparplan bleibt das Startportfolio investiert.</li>
         <li>Beim Hauskauf bleibt der Immobilienwert ab Kauf nominal konstant. Die Hypothek wird gleichmässig getilgt. Zins fällt auf die jeweilige Restschuld an.</li>

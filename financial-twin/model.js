@@ -22,8 +22,6 @@
     { id: 2, type: "home", age: 36, price: 580000, down: 115000, cost: 9000,
       rate: 1.8, term: 30, housingChange: -1000 },
   ];
-  const isEducation = (event) => event.type === "study" || event.type === "apprentice";
-  const isTemporary = (event) => isEducation(event) || event.type === "gap";
 
   function returnCases(equityReturn) {
     return {
@@ -55,18 +53,19 @@
       return "Das Eigenkapital darf den Kaufpreis nicht überschreiten.";
     }
 
+    const isTemporary = (item) => item.type === "study" || item.type === "gap";
     const endMonth = (item) => item.age * 12 + item.duration;
     if (isTemporary(event) && others.some((item) => isTemporary(item) &&
         event.age * 12 < endMonth(item) && item.age * 12 < endMonth(event))) {
-      return "Studium, Berufslehre und Auszeit dürfen sich zeitlich nicht überschneiden.";
+      return "Studium und Auszeit dürfen sich zeitlich nicht überschneiden.";
     }
     if (isTemporary(event) && others.some((item) => item.type === "retire" &&
         item.age * 12 < endMonth(event))) {
-      return "Ausbildung und Auszeit müssen vor dem Rentenbeginn enden.";
+      return "Studium und Auszeit müssen vor dem Rentenbeginn enden.";
     }
     if (event.type === "retire" && others.some((item) => isTemporary(item) &&
         event.age * 12 < endMonth(item))) {
-      return "Lege die Rente nach dem Ende von Ausbildung und Auszeit fest.";
+      return "Lege die Rente nach dem Ende von Studium und Auszeit fest.";
     }
     return "";
   }
@@ -77,11 +76,10 @@
     const scheduled = events.map((event) => ({
       ...event, start: (event.age - profile.age) * 12,
     }));
-    const education = scheduled.filter(isEducation);
-    const temporary = scheduled.filter(isTemporary);
+    const tuition = scheduled.filter((event) => event.type === "study");
+    const temporary = scheduled.filter((event) => event.type === "study" || event.type === "gap");
     const retirement = scheduled.find((event) => event.type === "retire");
     const children = scheduled.filter((event) => event.type === "children");
-    const household = scheduled.filter((event) => event.type === "marriage" || event.type === "move");
     const homeEvent = scheduled.find((event) => event.type === "home");
     const purchasePrices = homeEvent && priceFactor(homeEvent.start);
     const home = homeEvent && {
@@ -101,7 +99,7 @@
         month < event.start + event.duration);
       const retired = retirement && retirement.start <= month;
       const inflationFactor = priceFactor(month);
-      const payChange = education.reduce((total, event) => {
+      const payChange = tuition.reduce((total, event) => {
         const finished = event.start + event.duration;
         return finished <= month
           ? total + event.payChange * priceFactor(finished) * salaryFactor(month - finished)
@@ -115,22 +113,10 @@
       } else if (currentPhase) {
         income = currentPhase.type === "gap" ? 0 : currentPhase.income * inflationFactor;
         livingCosts = currentPhase.expenses;
-      } else {
-        const leaveIncomeShare = children.reduce((share, event) =>
-          event.start <= month && month < event.start + (event.leaveMonths ?? 0)
-            ? Math.min(share, (event.leaveIncome ?? 0) / 100) : share, 1);
-        income *= leaveIncomeShare;
       }
-      const childCosts = children.reduce((total, event) => {
-        const elapsed = month - event.start;
-        return total + (elapsed >= 0 && (!event.costYears || elapsed < event.costYears * 12)
-          ? event.count * event.monthlyCost : 0);
-      }, 0);
-      const householdChange = household.reduce((total, event) =>
-        total + (event.start <= month ? event.monthlyChange : 0), 0);
-      livingCosts = Math.max(0, livingCosts + householdChange);
-      const mandatory = starting.filter((event) =>
-        isTemporary(event) || ["expense", "marriage", "move"].includes(event.type));
+      const childCosts = children.reduce((total, event) =>
+        total + (event.start <= month ? event.count * event.monthlyCost : 0), 0);
+      const mandatory = starting.filter((event) => ["study", "gap", "expense"].includes(event.type));
       const cashCosts = mandatory.reduce((total, event) => total + event.cost, 0) * inflationFactor;
       const purchase = home?.start === month ? home : null;
       let housing = null;

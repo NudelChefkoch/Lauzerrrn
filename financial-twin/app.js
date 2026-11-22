@@ -22,7 +22,6 @@
     compareBy: "savings",
     showRange: true,
     isDemo: true,
-    baseline: null,
   };
   let result;
   let nextEventId = 3;
@@ -53,17 +52,6 @@
       }),
       details: (event) => event.duration + " Monate · " + money(event.income) + " Einkommen pro Monat",
       help: "Während des Studiums gelten die eingegebenen Monatswerte. Danach ändert sich das bisherige Nettoeinkommen um den angegebenen Betrag.",
-    },
-    apprentice: {
-      label: "Berufslehre",
-      fields: [duration, { ...income, label: "Lehrlingslohn netto / Monat (CHF)" }, expenses,
-        { name: "cost", label: "Einmalige Ausbildungskosten (CHF)" },
-        { name: "payChange", label: "Nettoeinkommen danach ± pro Monat (CHF)", min: -100000000 }],
-      defaults: (profile) => ({
-        duration: 36, income: 1500, expenses: Math.round(profile.expenses * 0.65), cost: 1200, payChange: 500,
-      }),
-      details: (event) => event.duration + " Monate · " + money(event.income) + " Lehrlingslohn pro Monat",
-      help: "Lehrlingslohn und Ausgaben gelten während der Lehre. Danach beginnt das reguläre Erwerbseinkommen mit der eingegebenen Änderung.",
     },
     gap: {
       label: "Gap Year / Auszeit", shortLabel: "Auszeit",
@@ -99,34 +87,10 @@
       fields: [
         { name: "count", label: "Anzahl Kinder", min: 1, max: 20, step: 1 },
         { name: "monthlyCost", label: "Kosten je Kind / Monat in heutigen CHF" },
-        { name: "costYears", label: "Dauer der Kinderkosten in Jahren (0 = dauerhaft)", max: 80, step: 1 },
-        { name: "leaveMonths", label: "Elternzeit in Monaten (0 = keine)", max: 36, step: 1 },
-        { name: "leaveIncome", label: "Einkommen während Elternzeit (% des regulären Lohns)", max: 100, step: 1 },
       ],
-      defaults: () => ({ count: 1, monthlyCost: 900, costYears: 0, leaveMonths: 0, leaveIncome: 55 }),
-      details: (event) => money(event.count * event.monthlyCost) + " zusätzlich pro Monat in heutigen CHF" +
-        (event.leaveMonths ? " · " + event.leaveMonths + " Monate Elternzeit" : ""),
-      help: "Die Kinderkosten steigen mit der Inflation. Während der Elternzeit gilt der angegebene Anteil deines regulären Gehalts, sofern du in einer Erwerbsphase bist.",
-    },
-    marriage: {
-      label: "Ehe", shortLabel: "Hochzeit",
-      fields: [
-        { name: "cost", label: "Dein Anteil an den Hochzeitskosten (CHF)" },
-        { name: "monthlyChange", label: "Deine Mehr- oder Minderkosten / Monat (CHF)", min: -100000000 },
-      ],
-      defaults: () => ({ cost: 8000, monthlyChange: 0 }),
-      details: (event) => money(event.cost) + " einmalig · " + signedMoney(event.monthlyChange) + " pro Monat",
-      help: "Gib deinen persönlichen Anteil ein. Ein negativer Monatsbetrag senkt deine Ausgaben.",
-    },
-    move: {
-      label: "Umzug",
-      fields: [
-        { name: "cost", label: "Einmalige Umzugskosten (CHF)" },
-        { name: "monthlyChange", label: "Änderung deiner Wohnkosten / Monat (CHF)", min: -100000000 },
-      ],
-      defaults: () => ({ cost: 3500, monthlyChange: 250 }),
-      details: (event) => money(event.cost) + " einmalig · " + signedMoney(event.monthlyChange) + " pro Monat",
-      help: "Gib die Differenz zwischen neuen und aktuellen Wohnkosten ein. Negative Beträge stehen für eine Ersparnis.",
+      defaults: () => ({ count: 1, monthlyCost: 900 }),
+      details: (event) => money(event.count * event.monthlyCost) + " zusätzlich pro Monat in heutigen CHF",
+      help: "Die Ausgaben steigen ab dem gewählten Alter dauerhaft um die Kosten pro Kind. Der Betrag wird im Modell an die Inflation angepasst.",
     },
     retire: {
       label: "Rente",
@@ -146,20 +110,14 @@
 
   function renderChart() {
     const investing = state.compareBy === "savings";
-    const comparingPaths = state.compareBy === "paths" && state.baseline;
-    const alternate = comparingPaths ? model.simulate(state.profile, state.baseline, state.endAge, state.risk,
-      { assumptions: state.assumptions }) : investing ? result.noSavings : result.noEvents;
-    const label = comparingPaths ? "Ursprünglicher Lebensweg" :
-      investing ? "Ohne monatlichen Sparplan" : "Ohne Lebensereignisse";
+    const alternate = investing ? result.noSavings : result.noEvents;
+    const label = investing ? "Ohne monatlichen Sparplan" : "Ohne Lebensereignisse";
     const difference = result.main.points.at(-1).net - alternate.points.at(-1).net;
     $("compare-investments").setAttribute("aria-pressed", investing);
-    $("compare-events").setAttribute("aria-pressed", !investing && !comparingPaths);
-    $("compare-paths").hidden = !state.baseline;
-    $("compare-paths").setAttribute("aria-pressed", Boolean(comparingPaths));
+    $("compare-events").setAttribute("aria-pressed", !investing);
     $("range-legend").hidden = !state.showRange;
     write("comparison-legend", label);
-    const effect = comparingPaths ? "verändert der ausgewählte Lebensweg" :
-      investing ? "verändert der Sparplan" : "verändern die Ereignisse";
+    const effect = investing ? "verändert der Sparplan" : "verändern die Ereignisse";
     const summary = direction(difference) === 0
       ? "Beide Varianten ergeben mit " + state.endAge + " Jahren dasselbe Nettovermögen."
       : "Mit " + state.endAge + " Jahren " + effect + " das Nettovermögen im Modell um " +
@@ -331,7 +289,7 @@
       input.max = field.max ?? 100000000;
       input.step = field.step ?? 0.01;
       input.required = true;
-      input.value = values[field.name] ?? definition.defaults(state.profile)[field.name];
+      input.value = values[field.name];
       label.append(input);
       return label;
     });
@@ -423,10 +381,6 @@
     state.compareBy = "events";
     renderChart();
   });
-  $("compare-paths").addEventListener("click", () => {
-    state.compareBy = "paths";
-    renderChart();
-  });
   $("show-range").addEventListener("change", (event) => {
     state.showRange = event.target.checked;
     renderChart();
@@ -473,32 +427,4 @@
   window.addEventListener("hashchange", updateNavigation);
   updateNavigation();
   render();
-
-  window.TwinDashboard = {
-    eventTypes: events,
-    money,
-    formatAge,
-    read() {
-      return {
-        profile: { ...state.profile }, events: state.events.map((event) => ({ ...event })),
-        risk: state.risk, endAge: state.endAge, assumptions: { ...state.assumptions },
-      };
-    },
-    load(scenario, baseline) {
-      state.profile = { ...scenario.profile };
-      state.events = scenario.events.map((event) => ({ ...event }));
-      state.risk = scenario.risk;
-      state.endAge = scenario.endAge;
-      state.assumptions = { ...scenario.assumptions };
-      state.baseline = baseline?.events ?? null;
-      state.compareBy = state.baseline ? "paths" : "savings";
-      state.isDemo = scenario.profile.name === "Alexia";
-      nextEventId = Math.max(0, ...state.events.map((event) => event.id)) + 1;
-      $("risk-slider").value = state.risk;
-      for (const [id, key] of [
-        ["salary-growth", "salaryGrowth"], ["inflation", "inflation"], ["equity-return", "equityReturn"],
-      ]) $(id).value = Number((state.assumptions[key] * 100).toFixed(1));
-      render();
-    },
-  };
 })();
