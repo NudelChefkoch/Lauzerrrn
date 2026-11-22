@@ -2,22 +2,24 @@
 // Talks to the 3D engine via its public API (CONTRACT.md) and to Python via the `send` callback from main.js.
 import { showCreator, setCreator, showWorld } from './engine.js';
 import { OPTIONS, CAT_LABEL, NICE, DEFAULT_CFG, SKINS, HAIRC, COLORS } from './core.js';
+import { createChat, chatTwinCount } from './chat.js';
+import { createDashboard } from './dashboard.js';
 
 /* =================================================================== helpers */
 const RARITY = { COMMON: '#8e9ab3', UNCOMMON: '#2fbf68', RARE: '#2f86ff', EPIC: '#a24bff', LEGENDARY: '#ff9d14' };
 const TIPS = [
-  'Früh anfangen lohnt sich: Der Zinseszins liebt Geduld.',
-  'Ein Notgroschen von 3–6 Monatsausgaben schützt vor teuren Krediten.',
-  'Konsumkredite und Kreditkarten kosten schnell 10 % Zins und mehr.',
-  'Breit gestreute ETFs verteilen das Risiko auf hunderte Firmen.',
-  'Säule 3a: Steuern sparen und gleichzeitig fürs Alter vorsorgen.',
-  'Mehr Lohn heisst nicht automatisch mehr ausgeben – Vorsicht vor Lifestyle-Inflation.',
-  'Wer seine Ausgaben kennt, kann sie steuern: Ein Budget wirkt Wunder.',
-  'Schwankungen gehören zum Anlegen – wer lange dabeibleibt, gewinnt oft.',
-  'Erst Schulden mit hohem Zins abbauen, dann investieren.',
-  'Kleine Beträge, regelmässig gespart, werden über Jahre gross.',
+  'Starting early pays off: compound interest loves patience.',
+  'A rainy-day fund of 3–6 months of spending protects you from expensive loans.',
+  'Consumer loans and credit cards easily cost 10 % interest or more.',
+  'Broad ETFs spread the risk over hundreds of companies.',
+  'Pillar 3a: save taxes and build your retirement at the same time.',
+  'A higher salary does not have to mean higher spending – watch out for lifestyle inflation.',
+  'If you know your spending, you can steer it: a budget works wonders.',
+  'Ups and downs are part of investing – staying in for the long run often wins.',
+  'Pay off high-interest debt first, then invest.',
+  'Small amounts, saved regularly, grow large over the years.',
 ];
-const WAIT_TXT = ['Das Leben würfelt', 'Die Zukunft wird simuliert', 'Tausend Leben werden durchgerechnet', 'Der Zufall mischt die Karten'];
+const WAIT_TXT = ['Life is rolling the dice', 'Simulating the future', 'Running a thousand lives', 'Chance is shuffling the cards'];
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (v, d = 0) => (v === null || v === undefined || v === '' || !Number.isFinite(+v)) ? d : +v;
@@ -27,7 +29,7 @@ export const chf = v => (num(v) < -0.5 ? 'CHF −' : 'CHF ') + grp(v);
 const chfSigned = v => (num(v) < -0.5 ? '−' : '+') + 'CHF ' + grp(v);
 function kfmt(v) {
   const n = num(v), a = Math.abs(n), s = n < -0.5 ? '−' : '';
-  if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + ' Mio.';
+  if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + 'M';
   if (a >= 1e4) return s + Math.round(a / 1e3) + 'k';
   return s + grp(a);
 }
@@ -44,13 +46,13 @@ function rarityOf(r, xp) {
 }
 function profileEmoji(status, i) {
   const s = String(status || '').toLowerCase();
-  if (/lehre|ausbildung/.test(s)) return '🧰';
-  if (/stud|uni|hochschule/.test(s)) return '📚';
-  if (/schul|gymi|gymnas/.test(s)) return '🎒';
-  if (/selbst|gründ/.test(s)) return '🚀';
-  if (/arbeitslos|such/.test(s)) return '🔎';
-  if (/teilzeit/.test(s)) return '⏳';
-  if (/angestellt|job|beruf|arbeit/.test(s)) return '💼';
+  if (/apprentice|lehre|ausbildung/.test(s)) return '🧰';
+  if (/educat|stud|uni|hochschule/.test(s)) return '📚';
+  if (/school|schul|gymi|gymnas/.test(s)) return '🎒';
+  if (/self|selbst|gründ/.test(s)) return '🚀';
+  if (/no job|unemploy|arbeitslos|such/.test(s)) return '🔎';
+  if (/part|teilzeit/.test(s)) return '⏳';
+  if (/employ|angestellt|job|beruf|arbeit/.test(s)) return '💼';
   return ['🙂', '😎', '🤓', '😄', '🥳', '😌'][i % 6];
 }
 const SWATCH = { skin: SKINS, hairColor: HAIRC, color: COLORS, car: COLORS };
@@ -74,7 +76,7 @@ export function drawFan(cv, fan, opt = {}) {
   g.font = `800 ${small ? 10 : 12}px Nunito, system-ui, sans-serif`; g.textBaseline = 'middle';
   const msg = t => { g.fillStyle = '#6b6394'; g.textAlign = 'center'; g.fillText(t, W / 2, H / 2); };
   const ages = fan && Array.isArray(fan.ages) ? fan.ages : []; const n = ages.length;
-  if (n < 2) return msg('Noch keine Daten');
+  if (n < 2) return msg('No data yet');
   const A = k => { const a = arr(fan[k]); return Array.from({ length: n }, (_, i) => (a[i] === null || a[i] === undefined || !Number.isFinite(+a[i])) ? null : +a[i]); };
   const past = A('past'), p5 = A('p5'), p50 = A('p50'), p95 = A('p95'), lazy = opt.lazy ? A('lazy') : null;
   let lastPast = 0; past.forEach((v, i) => { if (v !== null) lastPast = i; });
@@ -84,7 +86,7 @@ export function drawFan(cv, fan, opt = {}) {
   past.forEach((v, i) => { if (v !== null && i <= ni) vals.push(v); });
   for (let i = bf; i < n; i++) for (const v of [p5[i], p50[i], p95[i]]) if (v !== null) vals.push(v);
   if (lazy) lazy.forEach(v => { if (v !== null) vals.push(v); });
-  if (!vals.length) return msg('Noch keine Daten');
+  if (!vals.length) return msg('No data yet');
   let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals); if (hi - lo < 1) hi = lo + 1;
   const pad = (hi - lo) * .07; if (lo < 0) lo -= pad; hi += pad;
   const L = small ? 40 : 60, R = 10, T = 8, B = small ? 18 : 24;
@@ -104,7 +106,7 @@ export function drawFan(cv, fan, opt = {}) {
   const used = [];
   for (const i of [...xl].sort((a, b) => a - b)) {
     const x = X(i); if (used.some(u => Math.abs(u - x) < (small ? 30 : 34))) continue; used.push(x);
-    g.fillText(`${num(ages[i])} J.`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
+    g.fillText(`${num(ages[i])} y`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
   }
   const line = (a, from, to, color, width, dash = [], outline = 0) => {
     const pts = []; for (let i = from; i <= to; i++) if (a[i] !== null) pts.push([X(i), Y(a[i])]);
@@ -147,6 +149,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     pid: null, risk: null, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
     busy: false, busySince: 0, waiting: false, waitSeq: -1, waitPhase: null, waitTimer: 0,
     enginePhase: null, celebrated: new Set(), celPending: null,
+    sideTab: 'info', waitKind: null, chatPending: null, chatSeen: 0, dashClosing: false, followUp: null,
   };
   const E = (fn, ...a) => { if (!engineOk) return; try { return fn(...a); } catch (e) { console.warn('[game] engine call failed', e); } };
 
@@ -162,55 +165,62 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       <h1 class="logo logo-xl"><span class="l1">YOUR LIFE ·</span><span class="l2">YOUR CHOICE</span></h1>
       <div class="loadbar"><i></i></div>
       <div class="load-pct ol">0 %</div>
-      <p class="tip"><b>TIPP</b> <span></span></p>
+      <p class="tip"><b>TIP</b> <span></span></p>
     </div>
   </section>
 
   <section class="screen scr-title" data-s="title">
     <h1 class="logo logo-md"><span class="l1">YOUR LIFE ·</span><span class="l2">YOUR CHOICE</span></h1>
-    <p class="tagline ol">Triff Entscheidungen. Erlebe die Folgen.</p>
+    <p class="tagline ol">Make choices. Live the consequences.</p>
     <div class="title-btns pe">
-      <button class="btn btn-xl btn-green" data-act="toCreator">SPIELEN</button>
-      <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSE</button>
+      <button class="btn btn-xl btn-green" data-act="toCreator">PLAY</button>
+      <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSIS</button>
     </div>
-    <div class="hint">Figur ziehen zum Drehen · Enter zum Spielen</div>
+    <div class="hint">Drag the figure to turn it · Enter to play</div>
   </section>
 
   <section class="screen scr-creator" data-s="creator">
     <div class="cr-left">
-      <div class="cr-top pe"><button class="btn-round sm blue" data-act="toTitle" title="Zurück">◀</button><h2 class="hdr ol">DEINE FIGUR</h2></div>
+      <div class="cr-top pe"><button class="btn-round sm blue" data-act="toTitle" title="Back">◀</button><h2 class="hdr ol">YOUR CHARACTER</h2></div>
       <div class="chips pe"></div>
-      <button class="btn-round big arrow left pe" data-act="prev" title="Vorherige Option (←)">◀</button>
-      <button class="btn-round big arrow right pe" data-act="next" title="Nächste Option (→)">▶</button>
+      <button class="btn-round big arrow left pe" data-act="prev" title="Previous option (←)">◀</button>
+      <button class="btn-round big arrow right pe" data-act="next" title="Next option (→)">▶</button>
       <div class="plate pe"><div class="plate-cat"></div><div class="plate-val"></div><div class="pips"></div></div>
       <div class="namebar pe">
-        <div class="namefield"><label for="ylyc-name">NAME</label><input id="ylyc-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Dein Name"></div>
-        <button class="btn-round dicebtn" data-act="rand" title="Zufällige Figur"><span>🎲</span></button>
+        <div class="namefield"><label for="ylyc-name">NAME</label><input id="ylyc-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Your name"></div>
+        <button class="btn-round dicebtn" data-act="rand" title="Random character"><span>🎲</span></button>
       </div>
     </div>
     <aside class="cr-panel pe">
-      <div class="panel-head"><span class="ol">START-LEBEN</span></div>
+      <div class="panel-head"><span class="ol">STARTING LIFE</span></div>
       <div class="panel-body">
-        <h3 class="sec">1 · Wähle dein Startleben</h3><div class="grid-prof"></div>
-        <h3 class="sec">2 · Wähle deinen Anlagestil</h3><div class="grid-risk"></div>
+        <h3 class="sec">1 · Pick your starting life</h3><div class="grid-prof"></div>
+        <h3 class="sec">2 · Pick your investing style</h3><div class="grid-risk"></div>
       </div>
-      <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LOSFAHREN</button></div>
+      <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LET'S GO</button></div>
     </aside>
   </section>
 
   <section class="screen scr-play" data-s="play">
     <header class="hud pe"></header>
-    <aside class="side pe"><div class="side-inner">
-      <h3>🎯 Ziele</h3><div class="quests"></div>
-      <h3>🏆 Erfolge <small class="achn"></small></h3><div class="achs"></div>
-      <h3>📈 Dein Vermögen</h3><div class="fanbox"><canvas class="fan-play"></canvas></div>
-      <div class="legend"><span><i style="border-color:#ff3d8b"></i>bisher</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>p5–p95</span></div>
-      <h3 class="hist-h">🧭 Deine Stationen</h3><div class="hist"></div>
-    </div></aside>
+    <aside class="side pe" data-tab="info">
+      <div class="side-tabs" role="tablist">
+        <button class="stab" role="tab" data-act="sideTab" data-t="info">🎯 Goals</button>
+        <button class="stab" role="tab" data-act="sideTab" data-t="chat">💬 Twin<i class="udot"></i></button>
+      </div>
+      <div class="side-inner">
+      <h3>🎯 Goals</h3><div class="quests"></div>
+      <h3>🏆 Achievements <small class="achn"></small></h3><div class="achs"></div>
+      <h3>📈 Your net worth</h3><div class="fanbox"><canvas class="fan-play"></canvas></div>
+      <div class="legend"><span><i style="border-color:#ff3d8b"></i>so far</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>p5–p95</span></div>
+      <h3 class="hist-h">🧭 Your stations</h3><div class="hist"></div>
+      </div>
+      <div class="side-chat"></div>
+    </aside>
     <div class="tray pe"><div class="tray-head"></div><div class="tray-row"></div></div>
-    <div class="busy-pill">🎬 Das Leben passiert …</div>
+    <div class="busy-pill">🎬 Life is happening …</div>
     <footer class="dock pe"><div class="cats"></div>
-      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>WEITERFAHREN<small class="stayxp">+10 XP</small></button>
+      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>DRIVE ON</button>
     </footer>
   </section>
 
@@ -221,7 +231,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       <div class="res-sub"></div>
       <div class="res-stats"></div>
       <div class="res-list"></div>
-      <div class="res-foot"><button class="btn btn-lg btn-green" data-act="toFacts">WEITER ▶</button></div>
+      <div class="res-foot"><button class="btn btn-lg btn-green" data-act="toFacts">NEXT ▶</button></div>
     </div>
   </section>
 
@@ -233,17 +243,18 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
         <div class="facts-tiles"></div>
         <div class="facts-side">
           <div class="tile gauge"></div>
-          <div class="tile chart"><div class="k">📈 Dein Leben vs. nur weitergefahren</div>
+          <div class="tile chart"><div class="k">📈 Your life vs. just driving on</div>
             <div class="fanbox"><canvas class="fan-end"></canvas></div>
-            <div class="legend"><span><i style="border-color:#ff3d8b"></i>dein Leben</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>Spanne p5–p95</span><span><i style="border-color:#9a94b8"></i>nur weitergefahren</span></div>
+            <div class="legend"><span><i style="border-color:#ff3d8b"></i>your life</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>range p5–p95</span><span><i style="border-color:#9a94b8"></i>just driving on</span></div>
           </div>
         </div>
       </div>
       <p class="disclaimer"></p>
       <div class="res-foot">
-        <button class="btn btn-sm btn-purple" data-act="toSummary">◀ ZURÜCK</button>
-        <button class="btn btn-lg btn-pink" data-act="restart" data-wlock>NOCHMAL SPIELEN</button>
-        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSE</button>
+        <button class="btn btn-sm btn-purple" data-act="toSummary">◀ BACK</button>
+        <button class="btn btn-lg btn-yellow" data-act="dashOpen" data-wlock>DASHBOARD</button>
+        <button class="btn btn-lg btn-pink" data-act="restart" data-wlock>PLAY AGAIN</button>
+        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSIS</button>
       </div>
     </div>
   </section>
@@ -251,8 +262,8 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   <div class="toasts"></div>
   <div class="waitbox"><div class="wcard"><span class="dice">🎲</span><span class="wtxt"><span class="wlabel"></span><span class="wdots"></span></span></div></div>
   <div class="celebrate"><div class="confetti"></div><div class="cel-card">
-    <h3 class="cel-h ol">ERFOLG FREIGESCHALTET!</h3><div class="cel-list"></div>
-    <button class="btn btn-lg btn-yellow" data-act="celClose">SUPER!</button></div></div>`;
+    <h3 class="cel-h ol">ACHIEVEMENT UNLOCKED!</h3><div class="cel-list"></div>
+    <button class="btn btn-lg btn-yellow" data-act="celClose">AWESOME!</button></div></div>`;
 
   const $ = s => root.querySelector(s);
   const screens = {}; root.querySelectorAll('.screen').forEach(el => { screens[el.dataset.s] = el; });
@@ -261,12 +272,83 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     chips: $('.chips'), plateCat: $('.plate-cat'), plateVal: $('.plate-val'), pips: $('.pips'), name: $('#ylyc-name'),
     prof: $('.grid-prof'), risk: $('.grid-risk'),
     hud: $('.hud'), side: $('.side'), quests: $('.quests'), achs: $('.achs'), achn: $('.achn'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
-    tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'), stayXp: $('.stayxp'),
+    tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'),
     resSub: $('.res-sub'), resStats: $('.res-stats'), resList: $('.res-list'),
     factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'), disclaimer: $('.disclaimer'),
     toasts: $('.toasts'), waitLabel: $('.wlabel'), cel: $('.celebrate'), celList: $('.cel-list'), confetti: $('.confetti'),
+    sideChat: $('.side-chat'), sideTabs: $('.side-tabs'),
   };
   if (fanRO) { fanRO.observe(R.fanPlay); fanRO.observe(R.fanEnd); }
+
+  /* ---------------------------------------------------------------- Zwilling-Chat + DASHBOARD (CONTRACT "Extension") */
+  const chat = createChat({
+    onSend(text) {
+      if (st.waiting) return false;
+      st.chatPending = text;
+      if (!act({ action: 'chat', message: text }, null, { quiet: true, kind: 'chat', ms: 60000 })) { st.chatPending = null; return false; }
+      return true;
+    },
+    onCompare(sugg) {
+      if (st.waiting || !sugg || !sugg.key) return;
+      dash.preferPaths();
+      const ok = act({ action: 'plan_alt', key: String(sugg.key) }, 'Calculating a second life path', { quiet: dashVisible(), kind: 'dash' });
+      // Python opens the dashboard itself after plan_alt; if it did not (e.g. option no longer selectable), open it now
+      if (ok) st.followUp = () => { const b = block(); if (b && !b.dashboard) openDash(); else { st.dashClosing = false; renderExtras(); } };
+    },
+  });
+  const dash = createDashboard({
+    onClose: () => closeDash(),
+    onReset: () => { act({ action: 'plan_reset' }, null, { quiet: true, kind: 'dash' }) || renderExtras(); },
+    onEdit: moves => { act({ action: 'plan_edit', moves }, null, { quiet: true, kind: 'dash' }) || renderExtras(); },
+  });
+  root.insertBefore(dash.el, R.toasts);
+  R.sideChat.appendChild(chat.el);
+
+  function block() {
+    const p = st.P || {};
+    return p.phase === 'play' ? (p.play || null) : p.phase === 'end' ? (p.end || null) : null;
+  }
+  function dashVisible() {
+    const b = block();
+    return !!(b && b.dashboard && typeof b.dashboard === 'object' && !st.dashClosing && ['play', 'summary', 'facts'].includes(st.screen));
+  }
+  function chatVisible() {
+    return dashVisible() || (st.screen === 'play' && st.sideOpen && st.sideTab === 'chat');
+  }
+  function updateUnread() {
+    const n = chatTwinCount((block() || {}).chat);
+    if (n < st.chatSeen || chatVisible()) st.chatSeen = n;
+    const unread = n > st.chatSeen;
+    root.querySelectorAll('.chat-btn, .stab[data-t="chat"]').forEach(b => b.classList.toggle('unread', unread));
+    root.querySelectorAll('.chat-btn').forEach(b => b.classList.toggle('on', chatVisible()));
+  }
+  function renderExtras() {
+    const b = block() || {};
+    if (!b.dashboard) st.dashClosing = false;
+    const open = dashVisible();
+    dash.el.classList.toggle('on', open); dash.el.setAttribute('aria-hidden', String(!open));
+    root.classList.toggle('dash-open', open);
+    const host = open ? dash.chatHost : R.sideChat;
+    if (chat.el.parentNode !== host) host.appendChild(chat.el);
+    if (open) dash.render(b.dashboard, { loading: st.waiting && st.waitKind === 'dash', locked: st.waiting });
+    const av = (st.P && st.P.avatar) || st.cfg, hud = (b && b.hud) || {};
+    chat.render(b.chat || null, {
+      name: hud.name || av.name || st.cfg.name || '', color: safeColor(COLORS[av.color], '#7b4dff'), locked: st.waiting,
+      pending: st.waiting && st.waitKind === 'chat' ? st.chatPending : null,
+    });
+    updateUnread();
+  }
+  function openDash() {
+    const b = block(); if (!b || st.waiting) return;
+    if (b.dashboard) { st.dashClosing = false; renderExtras(); return; }     // already computed (close still in flight)
+    act({ action: 'dashboard', open: true }, 'Calculating your dashboard', { kind: 'dashopen' });
+  }
+  function closeDash() {
+    if (!block() || !block().dashboard) return;
+    st.dashClosing = true; renderExtras();
+    const sendClose = () => { if (st.dashClosing) act({ action: 'dashboard', open: false }, null, { quiet: true, kind: 'dashclose' }); };
+    if (st.waiting) st.followUp = sendClose; else sendClose();
+  }
 
   /* ---------------------------------------------------------------- screens */
   function go(name) {
@@ -282,6 +364,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (name === 'play') requestAnimationFrame(() => drawFan(R.fanPlay, R.fanPlay._fan, R.fanPlay._opt));
     if (name !== 'play') root.classList.remove('play-busy');
     updateLocks();
+    if (st.loaded) renderExtras();
   }
 
   function route() {
@@ -327,10 +410,10 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       const target = ready ? 100 : Math.min(92, (el / MIN) * 88 + (fontsDone ? 4 : 0));
       shown += (target - shown) * (ready ? .25 : .12);
       R.loadBar.style.width = shown.toFixed(1) + '%'; R.loadPct.textContent = Math.round(shown) + ' %';
-      if (!haveP && el > MIN + 400 && !connectMsg) { connectMsg = true; showTip('Verbinde mit der Simulation …'); }
+      if (!haveP && el > MIN + 400 && !connectMsg) { connectMsg = true; showTip('Connecting to the simulation …'); }
       if (ready && shown > 99.2) {
         R.loadBar.style.width = '100%'; R.loadPct.textContent = '100 %';
-        clearInterval(tipTimer); setTimeout(() => { st.loaded = true; route(); }, 260); return;
+        clearInterval(tipTimer); setTimeout(() => { st.loaded = true; route(); renderExtras(); }, 260); return;
       }
       requestAnimationFrame(tick);
     };
@@ -386,13 +469,13 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
         <div class="mb"><div class="emo">${profileEmoji(p.status_de, i)}</div>
           <div class="meta">${esc(p.status_de || '')}</div>
           <div class="meta">Start: <b>${chf(p.start_capital)}</b></div>
-          <div class="meta">pro Monat: <b>${chfSigned(p.typical_month)}</b></div></div>
-      </button>`).join('') : '<div class="empty">Startleben werden geladen …</div>';
+          <div class="meta">per month: <b>${chfSigned(p.typical_month)}</b></div></div>
+      </button>`).join('') : '<div class="empty">Loading starting lives …</div>';
     R.risk.innerHTML = risks.length ? risks.map(r => `
       <button class="mcard risk ${r.key === st.risk ? 'sel' : ''}" data-act="risk" data-k="${esc(r.key)}">
         <div class="mh">${esc(r.title || r.key)}</div>
         <div class="mb"><div class="emo">${esc(r.emoji || '📊')}</div><div class="txt">${esc(r.text || '')}</div></div>
-      </button>`).join('') : '<div class="empty">Anlagestile werden geladen …</div>';
+      </button>`).join('') : '<div class="empty">Loading investing styles …</div>';
   }
   function startGame() {
     const name = String(R.name.value || st.cfg.name || '').trim().slice(0, 16) || 'Alex';
@@ -404,35 +487,31 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderPlay() {
     const play = (st.P && st.P.play) || {};
     const h = play.hud || {};
-    const K = num(play.K, 15), turn = num(play.turn), xpPer = Math.max(1, num(h.xp_per_level, 400));
-    const xpPct = clamp(num(h.xp_in_level) / xpPer * 100, 0, 100);
+    const K = num(play.K, 15), turn = num(play.turn);
     const av = (st.P && st.P.avatar) || st.cfg, avCol = safeColor(COLORS[av.color], '#7b4dff');
     const name = h.name || av.name || 'Alex';
     const nw = num(h.net_worth);
     R.hud.innerHTML = `
       <div class="pill name"><span class="av" style="background:${avCol}">${esc(String(name).trim().charAt(0).toUpperCase() || '?')}</span>
-        <span class="big">${esc(name)}</span><span class="sub">· ${num(h.age, num(play.age))} J.</span></div>
-      <div class="pill lvl" title="${esc(h.xp_total !== undefined ? grp(h.xp_total) + ' XP gesamt' : '')}"><span class="lvl-badge">${num(h.level, 1)}</span>
-        <div class="xpwrap"><span class="sub"><span class="sub title">${esc(h.level_title || 'Level')} · </span>${grp(h.xp_in_level)}/${grp(xpPer)} XP</span>
-        <div class="xpbar"><i style="width:${xpPct.toFixed(1)}%"></i></div></div></div>
-      <div class="pill money" title="Nettovermögen"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
-      <div class="pill" title="Lebensfreude"><span class="ico">${esc(h.joy_emoji || '🙂')}</span><span class="big">${Math.round(num(h.joy))}</span></div>
-      <div class="pill" title="Erfolge"><span class="ico">🏆</span><span class="big">${num(h.achievements_got)}/${num(h.achievements_total)}</span></div>
+        <span class="big">${esc(name)}</span><span class="sub">· ${num(h.age, num(play.age))} y</span></div>
+      <div class="pill money" title="Net worth"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
+      <div class="pill" title="Joy"><span class="ico">${esc(h.joy_emoji || '🙂')}</span><span class="big">${Math.round(num(h.joy))}</span></div>
+      <div class="pill" title="Achievements"><span class="ico">🏆</span><span class="big">${num(h.achievements_got)}/${num(h.achievements_total)}</span></div>
       <div class="grow"></div>
       <div class="pill station"><span class="big">Station ${clamp(turn + 1, 1, K)}/${K}</span>${h.state_de ? `<span class="sub">${esc(h.state_de)}</span>` : ''}</div>
-      <button class="btn-round sm blue" data-act="side" title="Ziele, Erfolge & Vermögen">📊</button>`;
+      <button class="hbtn chat-btn" data-act="chatToggle" title="Twin chat"><span class="e">💬</span><span class="lbl">Twin</span><i class="udot"></i></button>
+      <button class="hbtn yellow dash-btn" data-act="dashOpen" data-wlock title="Dashboard: net worth, comparisons, timeline"><span class="e">📊</span><span class="lbl">DASHBOARD</span></button>
+      <button class="btn-round sm blue" data-act="side" title="Goals, achievements &amp; net worth">🎯</button>`;
 
     // categories
     const cats = arr(play.categories);
     if (!cats.some(c => c.key === st.selCat)) { const f = cats.find(c => num(c.open) > 0) || cats[0]; st.selCat = f ? f.key : null; }
     R.cats.innerHTML = cats.map((c, i) => `
-      <button class="mcard cat ${c.key === st.selCat ? 'sel' : ''}" data-act="selcat" data-k="${esc(c.key)}" style="--cc:${safeColor(c.color)}" title="${esc(c.label)} (Taste ${i + 1})">
+      <button class="mcard cat ${c.key === st.selCat ? 'sel' : ''}" data-act="selcat" data-k="${esc(c.key)}" style="--cc:${safeColor(c.color)}" title="${esc(c.label)} (key ${i + 1})">
         <span class="badge ${num(c.open) ? '' : 'zero'}">${num(c.open)}</span>
         <div class="mh">${esc(c.label)}</div><div class="mb"><div class="emo">${esc(c.emoji)}</div></div>
       </button>`).join('');
-    const stay = play.stay || {};
-    R.stayXp.textContent = `+${num(stay.xp, 10)} XP`;
-    renderTray(); renderSide(); updateLocks();
+    renderTray(); renderSide(); updateLocks(); updateUnread();
   }
   function renderTray() {
     const play = (st.P && st.P.play) || {};
@@ -440,25 +519,24 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     const ageEnd = num(play.start_age, 20) + num(play.K, 15);
     const cards = arr(play.cards).filter(c => c.cat === st.selCat).sort((a, b) => (a.locked ? 1 : 0) - (b.locked ? 1 : 0));
     R.trayHead.innerHTML = cat ? `<span class="tray-title ol">${esc(cat.emoji)} ${esc(cat.label)}</span>
-      <button class="btn-round sm" data-act="tray" title="Karten ein-/ausklappen">▾</button>` : '';
+      <button class="btn-round sm" data-act="tray" title="Show/hide cards">▾</button>` : '';
     R.trayRow.innerHTML = cards.length ? cards.map((c, i) => decisionCard(c, ageEnd, i)).join('')
-      : `<div class="tray-empty">Hier ist gerade nichts offen – wähle eine andere Kategorie oder fahr weiter.</div>`;
+      : `<div class="tray-empty">Nothing is open here right now – pick another category or drive on.</div>`;
     R.tray.classList.toggle('hide', !st.trayOpen || !cat || st.busy);
   }
   function decisionCard(c, ageEnd, i) {
     const r = rarityOf(c.rarity, c.xp), locked = !!c.locked;
     const chips = [];
-    if (num(c.xp)) chips.push(`<span class="chip2">⭐ +${grp(c.xp)} XP</span>`);
-    if (num(c.joy)) chips.push(`<span class="chip2 ${num(c.joy) > 0 ? 'pos' : 'neg'}" title="Lebensfreude">😊 ${signed(c.joy)}</span>`);
-    if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Unterschied zu „nur weitergefahren“ mit ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
+    if (num(c.joy)) chips.push(`<span class="chip2 ${num(c.joy) > 0 ? 'pos' : 'neg'}" title="Joy">😊 ${signed(c.joy)}</span>`);
+    if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Difference to just driving on, at ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
     if (c.credit !== undefined && c.credit !== null && Number.isFinite(+c.credit)) {
       const cr = Math.round(clamp(+c.credit, 0, 1) * 100);
-      chips.push(`<span class="chip2 ${cr >= 50 ? 'neg' : ''}" title="Wahrscheinlichkeit, einen Kredit zu brauchen">💳 ${cr} %</span>`);
+      chips.push(`<span class="chip2 ${cr >= 50 ? 'neg' : ''}" title="Probability of needing a loan">💳 ${cr} %</span>`);
     }
-    const proj = (c.median !== undefined && c.median !== null) ? `<div class="proj">Mit ${ageEnd}: <b>${chf(c.median)}</b><br>Spanne ${chfShort(c.p5)} – ${kfmt(c.p95)}</div>` : '';
-    const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Noch gesperrt';
+    const proj = (c.median !== undefined && c.median !== null) ? `<div class="proj">At ${ageEnd}: <b>${chf(c.median)}</b><br>Range ${chfShort(c.p5)} – ${kfmt(c.p95)}</div>` : '';
+    const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Still locked';
     const foot = locked ? `<div class="lockbox">🔒 ${esc(reason)}</div>`
-      : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>WÄHLEN</button>`;
+      : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>CHOOSE</button>`;
     return `<div class="dcard ${locked ? 'locked' : ''}" style="--rc:${RARITY[r]};animation-delay:${Math.min(i, 8) * 55}ms">
       <span class="rtag">${r}</span><div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
       <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>
@@ -467,19 +545,21 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderSide() {
     const play = (st.P && st.P.play) || {};
     R.side.classList.toggle('closed', !st.sideOpen); root.classList.toggle('play-side-open', st.sideOpen);
+    R.side.dataset.tab = st.sideTab; root.classList.toggle('play-chat', st.sideOpen && st.sideTab === 'chat');
+    R.sideTabs.querySelectorAll('.stab').forEach(b => { const on = b.dataset.t === st.sideTab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
     const qs = arr(play.quests);
     R.quests.innerHTML = qs.length ? qs.map(q => {
       const pct = Math.round(clamp(num(q.progress, num(q.target) ? num(q.current) / num(q.target) : 0), 0, 1) * 100);
       return `<div class="quest ${q.done ? 'done' : ''}"><div class="qt"><span>${q.done ? '✅ ' : ''}${esc(q.name)}</span><span>${pct} %</span></div>
         <div class="qbar"><i style="width:${pct}%"></i></div>
-        <div class="qs">${chf(q.current)} / ${chf(q.target)}${q.by_age !== undefined && q.by_age !== null ? ` · bis ${num(q.by_age)}` : ''}</div></div>`;
-    }).join('') : '<div class="qs">Keine Ziele aktiv.</div>';
+        <div class="qs">${chf(q.current)} / ${chf(q.target)}${q.by_age !== undefined && q.by_age !== null ? ` · by ${num(q.by_age)}` : ''}</div></div>`;
+    }).join('') : '<div class="qs">No active goals.</div>';
     const achs = arr(play.achievements);
     R.achn.textContent = `${achs.filter(a => a.got).length}/${achs.length}`;
     R.achs.innerHTML = achs.map(a => `<div class="ach ${a.got ? '' : 'off'}" data-t="${esc(a.title)}" title="${esc(a.title)}">${esc(a.emoji || '🏅')}</div>`).join('');
     const hist = arr(play.history);
     R.histH.style.display = hist.length ? '' : 'none';
-    R.hist.innerHTML = hist.map(x => `<span title="${esc(`${num(x.age)} J. · ${x.title || ''}`)}">${esc(x.emoji || '•')}</span>`).join('');
+    R.hist.innerHTML = hist.map(x => `<span title="${esc(`${num(x.age)} y · ${x.title || ''}`)}">${esc(x.emoji || '•')}</span>`).join('');
     if (play.fan) requestAnimationFrame(() => drawFan(R.fanPlay, play.fan, { small: true }));
   }
 
@@ -487,42 +567,41 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderSummary() {
     const end = (st.P && st.P.end) || {}, s = end.summary || {};
     const stars = clamp(Math.round(num(s.stars)), 0, 5);
-    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · Leben bis ${num(s.age_end)} · ${grp(s.xp_total)} XP gesamt`;
+    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · life up to ${num(s.age_end)}`;
     R.resStats.innerHTML = `
-      <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">Punkte</div></div>
-      <div class="stat"><div class="k">Sterne</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} von 5</div></div>
-      <div class="stat"><div class="k">Lebensfreude</div><div class="v">${esc(s.joy_emoji || '🙂')} ${Math.round(num(s.joy))}</div><div class="s">von 100</div></div>
-      <div class="stat"><div class="k">Level</div><div class="v">${num(s.level, 1)}</div><div class="s">${esc(s.level_title || '')}</div></div>`;
+      <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">points</div></div>
+      <div class="stat"><div class="k">Stars</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} of 5</div></div>
+      <div class="stat"><div class="k">Joy</div><div class="v">${esc(s.joy_emoji || '🙂')} ${Math.round(num(s.joy))}</div><div class="s">of 100</div></div>
+      <div class="stat"><div class="k">Decisions</div><div class="v">${grp(arr(s.choices).length)}</div><div class="s">made</div></div>`;
     const ch = arr(s.choices);
     R.resList.innerHTML = ch.length ? ch.map((c, i) => {
       const r = rarityOf(c.rarity, c.xp);
       return `<div class="rrow" style="--rc:${RARITY[r]};animation-delay:${Math.min(i, 14) * 70}ms">
-        <span class="rtag">${r}</span><span class="age">${num(c.age)} J.</span><span class="e">${esc(c.emoji || '🃏')}</span>
-        <div class="tt"><b>${esc(c.title)}</b><span>${esc(c.cat_label || '')}</span></div>
-        <div class="reward ${r === 'LEGENDARY' ? 'lg' : ''}">⭐ +${grp(c.xp)} XP</div></div>`;
-    }).join('') : '<div class="res-empty">Du bist einfach immer weitergefahren. Auch das ist eine Strategie! 🚗</div>';
+        <span class="rtag">${r}</span><span class="age">${num(c.age)} y</span><span class="e">${esc(c.emoji || '🃏')}</span>
+        <div class="tt"><b>${esc(c.title)}</b><span>${esc(c.cat_label || '')}</span></div></div>`;
+    }).join('') : '<div class="res-empty">You just kept driving on. That is a strategy too! 🚗</div>';
   }
   function renderFacts() {
     const end = (st.P && st.P.end) || {}, f = end.facts || {}, s = end.summary || {};
     const nw = num(f.net_worth), lazy = num(f.lazy_median), diff = nw - lazy, best = f.best || null;
     const tile = (k, v, sub = '', cls = '') => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
     R.factsTiles.innerHTML = [
-      tile('💰 Nettovermögen', chf(nw), `mit ${num(s.age_end) || num(arr((f.fan || {}).ages).slice(-1)[0])} Jahren`, 'hero'),
-      tile('🚗 vs. nur weitergefahren', chfSigned(diff), `nur weitergefahren: ${chf(lazy)}`, diff >= 0 ? 'good' : 'bad'),
-      tile('📏 Spanne p5–p95', `${kfmt(f.p5)} – ${kfmt(f.p95)}`, '90 % der simulierten Leben'),
+      tile('💰 Net worth', chf(nw), `at age ${num(s.age_end) || num(arr((f.fan || {}).ages).slice(-1)[0])}`, 'hero'),
+      tile('🚗 vs. just driving on', chfSigned(diff), `just driving on: ${chf(lazy)}`, diff >= 0 ? 'good' : 'bad'),
+      tile('📏 Range p5–p95', `${kfmt(f.p5)} – ${kfmt(f.p95)}`, '90 % of simulated lives'),
       tile('💵 Cash', chf(f.cash)),
       tile('📈 Portfolio', chf(f.portfolio)),
-      tile('🏡 Wohneigentum', chf(f.house_equity)),
-      tile('🧾 Schulden', chf(f.debt), '', num(f.debt) > 0 ? 'bad' : ''),
-      tile('💳 Höchster Kredit', chf(f.max_credit)),
-      tile('📅 Monate mit Kredit', grp(f.months_with_credit), num(f.months_with_credit) ? 'Monate im Minus' : 'nie im Minus 🎉'),
-      tile('🃏 Entscheidungen', grp(f.decisions)),
-      tile('🌟 Beste Entscheidung', best ? esc(best.title) : '–', best ? chfSigned(best.delta) : '', 'good'),
+      tile('🏡 Home equity', chf(f.house_equity)),
+      tile('🧾 Debt', chf(f.debt), '', num(f.debt) > 0 ? 'bad' : ''),
+      tile('💳 Largest loan', chf(f.max_credit)),
+      tile('📅 Months with a loan', grp(f.months_with_credit), num(f.months_with_credit) ? 'months in the red' : 'never in the red 🎉'),
+      tile('🃏 Decisions', grp(f.decisions)),
+      tile('🌟 Best decision', best ? esc(best.title) : '–', best ? chfSigned(best.delta) : '', 'good'),
     ].join('');
     const pct = clamp(Math.round(num(f.percentile)), 0, 100);
-    R.gauge.innerHTML = `${gaugeSvg(pct)}<div><div class="k">🏁 Perzentil</div><div class="gv">${pct}.</div>
-      <div class="gs">Besser als ${pct} % der simulierten Leben</div></div>`;
-    R.disclaimer.textContent = f.disclaimer || 'Synthetische Daten · keine Prognose · keine Anlageberatung';
+    R.gauge.innerHTML = `${gaugeSvg(pct)}<div><div class="k">🏁 Percentile</div><div class="gv">${pct}th</div>
+      <div class="gs">Better than ${pct} % of simulated lives</div></div>`;
+    R.disclaimer.textContent = f.disclaimer || 'Synthetic data · not a forecast · not investment advice';
     drawFan(R.fanEnd, f.fan || null, { lazy: true });
   }
 
@@ -543,8 +622,10 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   /* ---------------------------------------------------------------- celebration */
   function queueCelebration() {
     const p = st.P, list = arr(p && p.play && p.play.new_achievements);
-    if (!list.length || st.celebrated.has(p.seq)) return;
-    st.celebrated.add(p.seq); st.celPending = list;
+    // key by turn + titles, not seq: chat/dashboard actions bump seq without new achievements
+    const key = `${num(p.play.turn)}|${list.map(a => a.title).join('|')}`;
+    if (!list.length || st.celebrated.has(key)) return;
+    st.celebrated.add(key); st.celPending = list;
     setTimeout(() => showCelebration(false), 700);     // waits for the engine if an animation is running
     setTimeout(() => showCelebration(true), 15000);    // safety if busy never ends
   }
@@ -554,7 +635,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (st.busy && !force) return;                     // setBusy(false) calls us again
     st.celPending = null;
     R.celList.innerHTML = list.map((a, i) => `<div class="cel-item" style="animation-delay:${200 + i * 120}ms"><span class="e">${esc(a.emoji || '🏅')}</span>
-      <span class="t">${esc(a.title)}</span>${num(a.xp) ? `<span class="x">+${grp(a.xp)} XP</span>` : ''}</div>`).join('');
+      <span class="t">${esc(a.title)}</span></div>`).join('');
     const cols = ['#ff3d8b', '#ffd23f', '#2fd27a', '#2f7bff', '#ff8a1f', '#a24bff', '#ffffff'];
     R.confetti.innerHTML = Array.from({ length: 70 }, (_, i) =>
       `<i style="--x:${(Math.random() * 100).toFixed(1)}%;--c:${cols[i % cols.length]};--d:${(2.2 + Math.random() * 2).toFixed(2)}s;--s:${(-Math.random() * 3).toFixed(2)}s;--r:${Math.round(360 + Math.random() * 720)}deg"></i>`).join('');
@@ -579,20 +660,32 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (b) setTimeout(updateLocks, 40500);
     if (!b && st.celPending) setTimeout(() => showCelebration(false), 350);
   }
-  function setWaiting(on, label) {
-    st.waiting = !!on; root.classList.toggle('waiting', st.waiting); clearTimeout(st.waitTimer);
+  // opts: {quiet: no big overlay (chat, dashboard edits), kind: 'chat'|'dash'|'dashopen'|'dashclose', ms: timeout, silent: skip re-render}
+  function setWaiting(on, label, opts = {}) {
+    st.waiting = !!on; clearTimeout(st.waitTimer);
+    st.waitKind = st.waiting ? (opts.kind || null) : null;
+    const quiet = st.waiting && !!opts.quiet;
+    root.classList.toggle('waiting', st.waiting && !quiet); root.classList.toggle('waiting-quiet', quiet);
     if (st.waiting) {
       st.waitSeq = st.P ? num(st.P.seq, -1) : -1; st.waitPhase = st.P ? st.P.phase : null;
       R.waitLabel.textContent = label || WAIT_TXT[Math.floor(Math.random() * WAIT_TXT.length)];
-      st.waitTimer = setTimeout(() => { if (st.waiting) { setWaiting(false); toast('⏳ Keine Antwort – bitte nochmal versuchen', 3200); } }, 25000);
-    }
+      st.waitTimer = setTimeout(() => {
+        if (!st.waiting) return;
+        const kind = st.waitKind; st.followUp = null;
+        if (kind === 'dashclose') st.dashClosing = false;
+        setWaiting(false);
+        toast(kind === 'chat' ? '⏳ Your twin is not answering – please ask again' : '⏳ No answer – please try again', 3200);
+      }, num(opts.ms, 25000));
+    } else st.chatPending = null;
     updateLocks();
+    if (st.loaded && !opts.silent) renderExtras();
   }
-  function act(value, label) {
-    if (st.waiting) return;
-    const labels = { start: 'Dein Leben wird vorbereitet', restart: 'Ein neues Leben wartet', analyse: 'Analyse wird geöffnet' };
-    setWaiting(true, label || labels[value.action]);
-    try { send(value); } catch (e) { console.warn('[game] send failed', e); setWaiting(false); }
+  function act(value, label, opts = {}) {
+    if (st.waiting) return false;
+    const labels = { start: 'Preparing your life', restart: 'A new life is waiting', analyse: 'Opening the analysis' };
+    setWaiting(true, label || labels[value.action], opts);
+    try { send(value); } catch (e) { console.warn('[game] send failed', e); setWaiting(false); return false; }
+    return true;
   }
 
   /* ---------------------------------------------------------------- events */
@@ -616,7 +709,16 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
         R.cats.querySelectorAll('.cat').forEach(el => el.classList.toggle('sel', el.dataset.k === st.selCat));
         renderTray(); updateLocks(); break;
       case 'tray': st.trayOpen = false; renderTray(); break;
-      case 'side': st.sideOpen = !st.sideOpen; renderSide(); break;
+      case 'side':
+        if (st.sideOpen && st.sideTab === 'info') st.sideOpen = false; else { st.sideOpen = true; st.sideTab = 'info'; }
+        renderSide(); updateUnread(); break;
+      case 'sideTab': st.sideTab = b.dataset.t === 'chat' ? 'chat' : 'info'; renderSide(); updateUnread(); if (st.sideTab === 'chat') chat.scrollEnd(); break;
+      case 'chatToggle':
+        if (st.sideOpen && st.sideTab === 'chat') st.sideOpen = false; else { st.sideOpen = true; st.sideTab = 'chat'; }
+        renderSide(); updateUnread();
+        if (st.sideOpen) { chat.scrollEnd(); chat.focus(); }
+        break;
+      case 'dashOpen': openDash(); break;
       case 'choose': if (!engineBusy()) act({ action: 'choose', key: b.dataset.k }); break;
       case 'stay': if (!engineBusy()) act({ action: 'choose', key: ((st.P && st.P.play && st.P.play.stay) || {}).key || 'stay' }); break;
       case 'toFacts': go('facts'); break;
@@ -630,6 +732,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   window.addEventListener('keydown', ev => {
     if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
     if (R.cel.classList.contains('on') && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { closeCelebration(); ev.preventDefault(); return; }
+    if (root.classList.contains('dash-open')) { if (ev.key === 'Escape') { closeDash(); ev.preventDefault(); } return; }
     if (st.screen === 'title' && ev.key === 'Enter') { go('creator'); ev.preventDefault(); }
     else if (st.screen === 'creator') {
       if (ev.key === 'ArrowLeft') { stepOpt(-1); ev.preventDefault(); }
@@ -649,9 +752,11 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     const sig = `${p.seq}|${p.phase}`;
     if (sig === st.sig) return;
     st.sig = sig; st.P = p;
-    if (st.waiting && (num(p.seq, -1) > st.waitSeq || p.phase !== st.waitPhase)) setWaiting(false);
+    if (p.phase === 'boot') st.celebrated.clear();
+    if (st.waiting && (num(p.seq, -1) > st.waitSeq || p.phase !== st.waitPhase)) setWaiting(false, null, { silent: true });
     if (p.avatar && typeof p.avatar === 'object' && !st.touched) st.cfg = { ...DEFAULT_CFG, ...p.avatar };
-    if (st.loaded) route();
+    if (st.loaded) { route(); renderExtras(); }
+    if (!st.waiting && st.followUp) { const f = st.followUp; st.followUp = null; setTimeout(f, 0); }
   }
   startLoading();
   return { render, toast, setBusy, setWaiting, get screen() { return st.screen; } };

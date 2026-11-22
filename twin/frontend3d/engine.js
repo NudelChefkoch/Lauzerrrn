@@ -305,7 +305,7 @@ function placeAt(obj, B, face) { obj.position.copy(B); obj.rotation.y = face; sc
 /* ---------- life-event animations */
 async function withFocus(B, fn, face = null) { S.focus = B; S.focusFace = face; try { await fn(); } finally { S.focus = null; } }
 async function animGraduation(k, label) {
-  const { B, face, side } = spot(k); const uni = buildUni(); placeAt(uni, B, face); toast('🎓 ' + (label ? label.replace(/!*$/, '!') : 'Uniabschluss!'));
+  const { B, face, side } = spot(k); const uni = buildUni(); placeAt(uni, B, face); toast('🎓 ' + (label ? label.replace(/!*$/, '!') : 'Graduation!'));
   await withFocus(B, async () => {
     await popIn(uni); const ch = await exitCar(side);
     await walkTo(ch, frontOf(B, face, 1.6)); await walkTo(ch, frontOf(B, face, .9), 1.5); ch.visible = false; await wait(1.1);
@@ -315,7 +315,7 @@ async function animGraduation(k, label) {
   }, face);
 }
 async function animJob(k, label) {
-  const { B, face, side } = spot(k); const off = buildOffice(); placeAt(off, B, face); toast('💼 ' + (label || 'Neuer Job!'));
+  const { B, face, side } = spot(k); const off = buildOffice(); placeAt(off, B, face); toast('💼 ' + (label || 'New job!'));
   await withFocus(B, async () => {
     await popIn(off); const ch = await exitCar(side);
     await walkTo(ch, frontOf(B, face, 1.4)); ch.visible = false; await wait(.9);
@@ -325,7 +325,7 @@ async function animJob(k, label) {
   }, face);
 }
 async function animVacation(k) {
-  const { B, face, side } = spot(k); const beach = buildBeach(); placeAt(beach, B, face); toast('🏝️ Auszeit!');
+  const { B, face, side } = spot(k); const beach = buildBeach(); placeAt(beach, B, face); toast('🏝️ Time off!');
   await withFocus(B, async () => {
     await popIn(beach); const wasSuit = S.life.suit; if (wasSuit) { S.life.suit = false; rebuildChar(); }
     const ch = await exitCar(side); await walkTo(ch, B.clone().add(new THREE.Vector3(.4, 0, .3)));
@@ -336,7 +336,7 @@ async function animVacation(k) {
   }, face);
 }
 async function animHouse(k) {
-  const { B, face, side } = spot(k); const h = buildHouse('#f6efe4'); placeAt(h, B, face); h.position.y = 26; toast('🏡 Eigenes Zuhause!');
+  const { B, face, side } = spot(k); const h = buildHouse('#f6efe4'); placeAt(h, B, face); h.position.y = 26; toast('🏡 A home of your own!');
   await withFocus(B, async () => {
     await tween(1.1, x => { h.position.y = 26 * (1 - x * x); });
     burst(B, 'dust', 22); await tween(.35, x => { const s = 1 + Math.sin(x * Math.PI) * .18; h.scale.set(1 / s, s * .85 + .15 * (1 - Math.sin(x * Math.PI)), 1 / s); });
@@ -346,7 +346,7 @@ async function animHouse(k) {
   }, face);
 }
 async function animChild(k) {
-  const { B, side } = spot(k); toast('👶 Willkommen, Baby!');
+  const { B, side } = spot(k); toast('👶 Welcome, baby!');
   const wp = new THREE.Vector3(); S.car.getWorldPosition(wp);
   await withFocus(wp, async () => {
     const ch = await exitCar(side); faceCamera(ch); floatSprites(ch.position, '❤️', 8, .7);
@@ -355,7 +355,7 @@ async function animChild(k) {
   });
 }
 async function animRetirement(k) {
-  const { B, face, side } = spot(k); toast('🌅 Rente – Zeit zum Geniessen', 4000);
+  const { B, face, side } = spot(k); toast('🌅 Retirement – time to enjoy', 4000);
   const chair = buildChair(); placeAt(chair, B, face);
   await withFocus(B, async () => {
     await popIn(chair);
@@ -369,7 +369,7 @@ async function animRetirement(k) {
   }, face);
 }
 async function animFate(a) {
-  const wp = new THREE.Vector3(); S.car.getWorldPosition(wp); toast(`${a.emoji || '🃏'} ${a.label || 'Schicksal'}`);
+  const wp = new THREE.Vector3(); S.car.getWorldPosition(wp); toast(`${a.emoji || '🃏'} ${a.label || 'Fate'}`);
   const s = sprite(a.emoji || '🃏', 2.2); s.position.copy(wp).add(new THREE.Vector3(0, 2.6, 0)); scene.add(s);
   await tween(.4, x => s.scale.setScalar(2.2 * easeOutBack(x)));
   if (a.type === 'crash') { await tween(.6, x => { S.car.position.y = Math.sin(x * Math.PI * 4) * .15; }); }
@@ -379,7 +379,7 @@ async function playAnim(a, k) {
   switch (a.type) {
     case 'graduation': return animGraduation(k, a.label);
     case 'job': return animJob(k, a.label);
-    case 'startup': return animJob(k, a.label || 'Startup gegründet!');
+    case 'startup': return animJob(k, a.label || 'Startup founded!');
     case 'vacation': return animVacation(k);
     case 'house': return animHouse(k);
     case 'child': return animChild(k);

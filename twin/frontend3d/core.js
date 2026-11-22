@@ -18,10 +18,17 @@ const OPTIONS = {
   color: Object.keys(COLORS),
   car: Object.keys(COLORS),
 };
-const CAT_LABEL = { gender: 'Geschlecht', skin: 'Hautton', hair: 'Frisur', hairColor: 'Haarfarbe', hat: 'Hut',
-                    outfit: 'Outfit', color: 'Farbe', car: 'Auto' };
-const NICE = { keiner: 'kein Hut', kopfhoerer: 'Kopfhörer', strohhut: 'Strohhut', partyhut: 'Partyhut', tshirt: 'T-Shirt',
-               tuerkis: 'türkis', gruen: 'grün', weiss: 'weiss', pferdeschwanz: 'Pferdeschwanz', dunkelbraun: 'dunkelbraun' };
+const CAT_LABEL = { gender: 'Gender', skin: 'Skin tone', hair: 'Hairstyle', hairColor: 'Hair colour', hat: 'Hat',
+                    outfit: 'Outfit', color: 'Colour', car: 'Car' };
+// display names for the (internal, German) option keys
+const NICE = { frau: 'woman', mann: 'man', divers: 'non-binary',
+               hell: 'light', rosig: 'rosy', oliv: 'olive', mittel: 'medium', braun: 'brown', dunkel: 'dark',
+               kurz: 'short', lang: 'long', dutt: 'bun', locken: 'curls', pferdeschwanz: 'ponytail', afro: 'afro',
+               iro: 'mohawk', glatze: 'bald',
+               schwarz: 'black', dunkelbraun: 'dark brown', blond: 'blond', rot: 'red', pink: 'pink', blau: 'blue', grau: 'grey',
+               keiner: 'no hat', cap: 'cap', beanie: 'beanie', strohhut: 'straw hat', partyhut: 'party hat', kopfhoerer: 'headphones',
+               hoodie: 'hoodie', tshirt: 'T-shirt', hemd: 'shirt', kleid: 'dress', sport: 'sportswear',
+               orange: 'orange', tuerkis: 'turquoise', gelb: 'yellow', gruen: 'green', violett: 'violet', weiss: 'white', navy: 'navy' };
 const DEFAULT_CFG = { name: 'Alex', gender: 'frau', skin: 'rosig', hair: 'lang', hairColor: 'braun', hat: 'keiner',
                       outfit: 'hoodie', color: 'violett', car: 'tuerkis' };
 

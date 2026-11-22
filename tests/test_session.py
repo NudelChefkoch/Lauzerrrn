@@ -42,9 +42,15 @@ def check(p: dict) -> dict:
         assert fan["past"][pl["turn"]] is not None and fan["p50"][pl["turn"]] is not None
         assert all(v is None for v in fan["past"][pl["turn"] + 1:])
         assert all(v is None for v in fan["p50"][:pl["turn"]])
-        assert pl["quests"][-1]["name"] == "Schuldenfrei bleiben"
+        assert pl["quests"][-1]["name"] == "Stay debt-free"
         assert set(pl["world"]) >= {"avatar", "turn", "prev_turn", "start_age", "K", "badges", "life", "anims",
                                     "finale"}
+    if p["phase"] in ("play", "end"):
+        blk = p[p["phase"]]
+        assert set(blk["chat"]) >= {"available", "model", "mode", "messages", "prompts"}
+        assert blk["chat"]["mode"] in ("llm", "offline") and blk["chat"]["messages"]
+        assert all(m["role"] in ("twin", "user") and isinstance(m["tools"], list) for m in blk["chat"]["messages"])
+        assert "dashboard" in blk
     if p["phase"] == "end":
         e = p["end"]
         assert e["world"]["finale"] is True

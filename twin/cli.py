@@ -27,23 +27,23 @@ def main() -> None:
                     shocks=Shocks(job_loss_per_year=args.job_loss))
     res = simulate(person, preset(args.scenario, person), args.years, a, args.paths, args.seed, calib=calib)
 
-    print(f"{person.name} ({person.profile_id}), {person.age} J., {person.status}; "
-          f"Cash {person.cash:,.0f}, Portfolio {person.portfolio:,.0f}, Schulden {person.debt:,.0f}")
-    print(f"Szenario '{args.scenario}', {args.years} Jahre, Markt '{args.market}', Strategie '{args.strategy}'")
+    print(f"{person.name} ({person.profile_id}), {person.age} y, {person.status}; "
+          f"Cash {person.cash:,.0f}, Portfolio {person.portfolio:,.0f}, debt {person.debt:,.0f}")
+    print(f"Scenario '{args.scenario}', {args.years} years, market '{args.market}', strategy '{args.strategy}'")
     for line in describe(res.plan):
         print("  " + line)
-    print("\nNettovermoegen (CHF) am Jahresende:  P5 / P50 / P95")
+    print("\nNet worth (CHF) at year end:  P5 / P50 / P95")
     nw = res.percentiles["net_worth"]
     for y in range(1, args.years + 1):
         t = 12 * y
-        print(f"  Jahr {y:2d}: {nw[0, t]:>12,.0f} {nw[2, t]:>12,.0f} {nw[4, t]:>12,.0f}")
-    print("\nKennzahlen:")
+        print(f"  Year {y:2d}: {nw[0, t]:>12,.0f} {nw[2, t]:>12,.0f} {nw[4, t]:>12,.0f}")
+    print("\nMetrics:")
     for k, v in res.metrics.items():
         print(f"  {k:28s} {v:>14,.3f}")
     for g in res.goals:
-        print(f"  Ziel '{g['goal']}' ({g['target']:,.0f} CHF, Monat {g['month']}): "
-              f"P = {g['p_reached']:.0%}, Median liquide {g['median_liquid']:,.0f}")
-    print(f"\nBuchhaltungs-Check (max. Abweichung): {res.identity_error:.2e} CHF")
+        print(f"  Goal '{g['goal']}' ({g['target']:,.0f} CHF, month {g['month']}): "
+              f"P = {g['p_reached']:.0%}, median liquid {g['median_liquid']:,.0f}")
+    print(f"\nAccounting check (max. deviation): {res.identity_error:.2e} CHF")
 
 
 if __name__ == "__main__":

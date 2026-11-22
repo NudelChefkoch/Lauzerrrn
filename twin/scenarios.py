@@ -23,8 +23,8 @@ class Study:
     side_income: float | None = None       # net side-job income while studying (default: current or 1000)
     salary_after: float | None = None      # default: median young employed salary from the data
     expenses_after: float = 0.0            # lifestyle change per month once working
-    label: str = "Studium"
-    end_label: str = "Berufseinstieg"
+    label: str = "Studies"
+    end_label: str = "First job"
 
 
 @dataclass(frozen=True)
@@ -40,14 +40,14 @@ class JobChange:
     start: int
     raise_pct: float = 0.10
     gap_months: int = 0                    # months without income between jobs (no ALV when quitting)
-    label: str = "Jobwechsel"
+    label: str = "Job change"
 
 
 @dataclass(frozen=True)
 class Unemployment:
     start: int
     months: int                            # afterwards back to the previous salary
-    label: str = "Arbeitslos"
+    label: str = "Unemployed"
 
 
 @dataclass(frozen=True)
@@ -55,42 +55,42 @@ class SelfEmployment:
     start: int
     income: float | None = None            # mean net per month; default: median self-employed group
     startup_cost: float = 10_000.0
-    label: str = "Selbststaendig"
+    label: str = "Self-employed"
 
 
 @dataclass(frozen=True)
 class HouseBuy:
     start: int
     price: float
-    label: str = "Hauskauf"
+    label: str = "House purchase"
 
 
 @dataclass(frozen=True)
 class OneOff:
     start: int
     amount: float                          # positive = cost, negative = windfall
-    label: str = "Einmalig"
+    label: str = "One-off"
 
 
 @dataclass(frozen=True)
 class ExpenseChange:
     start: int
     amount: float                          # change of monthly expenses from this month on (+ = more)
-    label: str = "Ausgaben"
+    label: str = "Expenses"
 
 
 @dataclass(frozen=True)
 class MarketCrash:
     start: int
     size: float = -0.30                    # equity drop in that month, on top of normal returns
-    label: str = "Boersencrash"
+    label: str = "Market crash"
 
 
 @dataclass(frozen=True)
 class StrategyChange:
     start: int
     equity_share: float                    # new share of equities in the portfolio from this month on
-    label: str = "Strategie"
+    label: str = "Strategy"
 
 
 Event = (Study | Job | JobChange | Unemployment | SelfEmployment | HouseBuy | OneOff
@@ -224,6 +224,6 @@ PRESETS = ["basis", "berufseinstieg", "master", "master_dann_wechsel", "jobverlu
 def describe(plan: Plan) -> list[str]:
     out = []
     for t, label in plan.labels:
-        out.append(f"Monat {t:3d}: {label} -> {STATE_NAMES[int(plan.state[t])]}, "
-                   f"Einkommen {plan.income[t]:,.0f} CHF")
+        out.append(f"Month {t:3d}: {label} -> {STATE_NAMES[int(plan.state[t])]}, "
+                   f"income {plan.income[t]:,.0f} CHF")
     return out

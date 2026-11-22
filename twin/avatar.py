@@ -183,27 +183,27 @@ def car_group(a: Avatar, u: str) -> str:
 def car_svg(a: Avatar, size: int = 220, uid: str = "c") -> str:
     u = f"{uid}_"
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 152" width="{size}" height="{size * 152 / 220:.0f}" '
-            f'role="img" aria-label="Auto von {html.escape(a.name)}">' + _defs(a, u) + car_group(a, u) + "</svg>")
+            f'role="img" aria-label="Car of {html.escape(a.name)}">' + _defs(a, u) + car_group(a, u) + "</svg>")
 
 
 # ---------------------------------------------------------------- 8 proposals
 PRESET_AVATARS: list[tuple[Avatar, str]] = [
     (Avatar("Lea", "hell", "lang", "braun", "hoodie", "violett", "rund", "kopfhoerer", "mint", "tuerkis"),
-     "Die Studentin: Uni, Nebenjob, knappes Budget"),
+     "The student: uni, side job, tight budget"),
     (Avatar("Noah", "mittel", "kurz", "schwarz", "tshirt", "orange", "keine", "cap", "blau", "blau"),
-     "Der Lehrling: früh eigenes Geld, erste Versicherungen"),
+     "The apprentice: own money early, first insurances"),
     (Avatar("Amina", "dunkel", "dutt", "schwarz", "jacke", "tuerkis", "eckig", "keine", "gelb", "gelb"),
-     "Die Gründerin: hohes Risiko, hohe Schwankung"),
+     "The founder: high risk, big swings"),
     (Avatar("Luca", "hell", "seitenscheitel", "blond", "hemd", "weiss", "keine", "keine", "navy", "navy", True),
-     "Der Pendler: sicherer Job, 13. Monatslohn"),
+     "The commuter: safe job, 13th monthly salary"),
     (Avatar("Mia", "rosig", "locken", "rot", "tshirt", "gelb", "keine", "beanie", "mint", "pink"),
-     "Die Kreative: Freelance, unregelmässiges Einkommen"),
+     "The creative: freelance, irregular income"),
     (Avatar("Jonas", "braun", "undercut", "dunkelbraun", "hoodie", "rot", "keine", "keine", "orange", "orange"),
-     "Der Sportler: Teilzeit plus Training, sparsam"),
+     "The athlete: part-time plus training, frugal"),
     (Avatar("Sofia", "oliv", "pferdeschwanz", "braun", "jacke", "oliv", "sonnenbrille", "keine", "pink", "gruen"),
-     "Die Weltenbummlerin: Gap Year, dann Berufseinstieg"),
+     "The globetrotter: gap year, then first job"),
     (Avatar("Elias", "dunkel", "afro", "schwarz", "hoodie", "gruen", "keine", "kopfhoerer", "violett", "violett"),
-     "Der Gamer: Tech-Job, investiert gern risky"),
+     "The gamer: tech job, likes risky investing"),
 ]
 
 
@@ -212,10 +212,10 @@ def gallery_html(items: list[tuple[Avatar, str]] = PRESET_AVATARS) -> str:
         f'<figure class="card"><div class="pic">{avatar_svg(a, 150, f"g{i}")}</div>'
         f'<div class="car">{car_svg(a, 150, f"k{i}")}</div>'
         f'<figcaption><b>{html.escape(a.name)}</b><span>{desc}</span>'
-        f'<small>{a.hair} · {a.hair_color} · {a.outfit} {a.outfit_color} · Brille {a.glasses} · Hut {a.hat}</small></figcaption></figure>'
+        f'<small>{a.hair} · {a.hair_color} · {a.outfit} {a.outfit_color} · glasses {a.glasses} · hat {a.hat}</small></figcaption></figure>'
         for i, (a, desc) in enumerate(items))
-    return f"""<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Avatar-Vorschläge</title><style>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Avatar ideas</title><style>
 :root{{--bg:#f6f4ef;--card:#fffdf8;--ink:#1f1d1a;--muted:#6b675f;--line:#e6e1d6}}
 @media (prefers-color-scheme:dark){{:root:not([data-theme="light"]){{--bg:#16161a;--card:#202026;--ink:#f0efec;--muted:#b4b1a8;--line:#33333b}}}}
 :root[data-theme="dark"]{{--bg:#16161a;--card:#202026;--ink:#f0efec;--muted:#b4b1a8;--line:#33333b}}
@@ -227,8 +227,8 @@ h1{{font-size:24px;margin:0 0 4px}} p.lead{{color:var(--muted);margin:0 0 20px}}
 figcaption{{display:flex;flex-direction:column;gap:2px;text-align:center}} figcaption span{{color:var(--muted)}}
 figcaption small{{color:var(--muted);font-size:12px}}
 svg{{max-width:100%;height:auto}}
-</style></head><body><h1>Avatar-Vorschläge</h1>
-<p class="lead">8 Startfiguren aus dem Baukasten. Alles ist frei kombinierbar: 6 Hauttöne, 9 Frisuren, 8 Haarfarben, 4 Outfits, 4 Brillen, 4 Kopfbedeckungen, 12 Farben.</p>
+</style></head><body><h1>Avatar ideas</h1>
+<p class="lead">8 starter characters from the kit. Everything can be combined freely: 6 skin tones, 9 hairstyles, 8 hair colours, 4 outfits, 4 glasses, 4 hats, 12 colours.</p>
 <div class="grid">{cards}</div></body></html>"""
 
 

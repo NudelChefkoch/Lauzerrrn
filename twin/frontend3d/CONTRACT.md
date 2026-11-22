@@ -93,3 +93,62 @@ Every value carries a strictly increasing `nonce` (use `Date.now()`); Python ign
 4. **Play** – island full-screen; HUD (name/age, level + XP bar, 💰, joy, 🏆); bottom: 6 category cards (blue header with title, big emoji body, count of open options) – the SELECTED one is shown by recolouring its background/header (no check mark); above it the decision cards of that category (rarity tag, preview chips, 🔒 reason when locked), "WEITERFAHREN" button; side panel with quests, achievements and a small fan chart (canvas). Buttons disabled while `busy`. New achievements → celebration popup.
 5. **Life summary** (end) – "RESULTS" corner tag, "LIFE SUMMARY" heading, dark rows per choice with rarity tag + XP reward tile, score/stars/joy; "WEITER".
 6. **Financial facts** – big stat tiles, percentile gauge, fan chart with "dein Leben" vs "nur weitergefahren", disclaimer; "NOCHMAL SPIELEN" + "ANALYSE".
+
+---
+
+# Extension: Juli's analysis inside the game (branch `danilel-juli-merge`)
+
+Juli's standalone app lives unchanged in `financial-twin/` (reference only). Its DASHBOARD (metrics, projection chart with
+comparison modes, draggable timeline, "Zwei Lebenswege") and its ZWILLING-CHAT (Ollama/Qwen router that only picks among
+computed actions; numbers always come from the model) are re-built INSIDE our game, but every number comes from OUR SDE.
+
+## Payload additions (inside `play` AND inside `end`)
+```json
+"chat": {
+  "available": true,                 // Ollama reachable and model present
+  "model": "qwen3:4b",
+  "mode": "llm" | "offline",         // offline = rule-based routing, same computed answers
+  "messages": [
+    {"role": "twin" | "user", "text": "…",
+     "tools": [{"name": "compare_option", "args": "bachelor", "result": "+CHF 749054 at 35, loan 100 %"}],
+     "suggestion": {"key": "frugal", "title": "Sparsamer leben"} | null}
+  ],
+  "prompts": ["Kann ich mir ein Haus leisten?", "Was zählt am meisten?", "Was ist mein bester nächster Schritt?"]
+},
+"dashboard": null | {
+  "ages": [20, 21, …, 35],                         // yearly
+  "now_index": 3,                                   // index of the current age (end phase: last index)
+  "inflation": 0.01,
+  "series": {
+    "plan":      {"p5": […], "p50": […], "p95": […], "life": […]},   // life = the played path (path 0)
+    "no_saving": {"p50": […], "life": […]},                         // same plan, nothing invested
+    "no_events": {"p50": […], "life": […]},                         // no player decisions at all
+    "alt":       null | {"p5": […], "p50": […], "p95": […], "life": […]}
+  },
+  "alt_label": null | "Hauskauf 2 Jahre später",
+  "summary": "Mit deinem Plan liegt dein Vermögen mit 35 bei CHF … (Spanne …).",
+  "timeline": [{"id": "d3", "emoji": "🎓", "title": "Bachelor", "age": 20, "cat": "bildung", "movable": true}],
+  "metrics": {"net_now": 3347.0, "current_age": 23}
+}
+```
+`dashboard` is non-null only while the dashboard is open. All series use the SAME seed (common random numbers), so
+"plan" vs "alt" is a counterfactual comparison in the same simulated world.
+
+## New actions (JS → Python)
+- `{"action": "chat", "nonce": n, "message": "Kann ich mir ein Haus leisten?"}`
+- `{"action": "dashboard", "nonce": n, "open": true|false}`
+- `{"action": "plan_edit", "nonce": n, "moves": {"d3": 22}}` – move decision groups to new ages → `series.alt` + `alt_label`
+- `{"action": "plan_alt", "nonce": n, "key": "frugal"}` – alternative = played plan + this option now (from a chat suggestion)
+- `{"action": "plan_reset", "nonce": n}` – clear the alternative
+Every handled action increments `seq`.
+
+## Client
+- PLAY: a Zwilling-Chat panel (collapsible, avatar initial, message thread with tool-trace chips "🔧 name(args) → result",
+  quick-prompt chips, input + SENDEN; typing indicator while waiting; "Im Dashboard vergleichen" button on suggestions →
+  plan_alt). A DASHBOARD button in the HUD.
+- DASHBOARD screen (game style, overlay over the 3D world): metric tiles (Nettovermögen heute · modelliertes Vermögen mit
+  [age selector] · Kaufkraft in heutigen CHF · Effekt des Sparplans), projection canvas chart (median line + p5–p95 band +
+  'dein Leben' line + comparison line) with mode toggle "Sparplan" | "Lebensereignisse" | "Zwei Lebenswege" (all computed
+  client-side from the series), hover tooltip; a horizontal TIMELINE of decisions on the age axis where movable chips can be
+  dragged to another age → plan_edit; "Zurücksetzen" → plan_reset; the chat panel is available here too; ZURÜCK closes.
+- END: Financial facts gets a DASHBOARD button.

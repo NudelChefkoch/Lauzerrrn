@@ -13,7 +13,8 @@ from functools import lru_cache
 
 import numpy as np
 
-from . import game
+from . import agent, dashboard, game
+from .analysis import tornado
 from .calibration import calibrate
 from .config import STATE_NAMES, STRATEGY_PRESETS, Assumptions, Strategy
 from .game import (ACHIEVEMENTS, CATS, OPTION_BY_KEY, STAY, YEARS, Ctx, animations, available,
@@ -23,37 +24,43 @@ HEIGHT = 860
 XP_PER_LEVEL = 400
 ACHIEVEMENT_XP = 150
 START_JOY = 60
-DISCLAIMER = "Synthetische Daten · keine Prognose · keine Anlageberatung"
+DISCLAIMER = "Synthetic data · not a forecast · not investment advice"
 
 DEFAULT_AVATAR = {"name": "Alex", "gender": "frau", "skin": "rosig", "hair": "lang", "hairColor": "braun",
                   "hat": "keiner", "outfit": "hoodie", "color": "violett", "car": "tuerkis"}
 
-STATE_DE = {"student": "in Ausbildung", "employed": "angestellt", "unemployed": "ohne Job",
-            "self_employed": "selbstständig", "other": "anderes"}
-STATUS_DE = {"student": "in Ausbildung", "employed": "angestellt", "part_time": "Teilzeit",
-             "unemployed": "ohne Job", "self_employed": "selbstständig", "retired": "pensioniert"}
-GOAL_DE = {"Emergency savings": "Notgroschen", "Career transition": "Polster für den Jobwechsel",
-           "Education flexibility": "Bildungsreserve", "Housing deposit": "Eigenkapital fürs Zuhause",
-           "Long-term financial resilience": "Langfristige Reserve", "Retirement reserve": "Altersvorsorge"}
+# display texts (the payload keys keep their historical *_de names, see CONTRACT.md)
+STATE_DE = {"student": "in education", "employed": "employed", "unemployed": "no job",
+            "self_employed": "self-employed", "other": "other"}
+STATUS_DE = {"student": "in education", "employed": "employed", "part_time": "part-time",
+             "unemployed": "no job", "self_employed": "self-employed", "retired": "retired"}
+GOAL_DE = {"Emergency savings": "Rainy-day fund", "Career transition": "Cushion for a job change",
+           "Education flexibility": "Education reserve", "Housing deposit": "Home deposit",
+           "Long-term financial resilience": "Long-term reserve", "Retirement reserve": "Retirement savings"}
 
 CAT_COLORS = {"bildung": "#2a78d6", "karriere": "#eb6834", "wohnen": "#2f9e44", "familie": "#e87ba4",
               "auszeit": "#1baf7a", "geld": "#eda100"}
 
 
+# stable internal category keys (used by the client for colours and tabs)
+CAT_KEYS = {"Education": "bildung", "Career": "karriere", "Housing": "wohnen", "Family": "familie",
+            "Time off": "auszeit", "Money": "geld"}
+
+
 def _split_cat(cat: str) -> tuple[str, str, str]:
-    """'🎓 Bildung' -> ('bildung', 'Bildung', '🎓')."""
+    """'🎓 Education' -> ('bildung', 'Education', '🎓')."""
     emoji, label = cat.split(" ", 1)
-    return label.lower(), label, emoji
+    return CAT_KEYS.get(label, label.lower()), label, emoji
 
 
 CAT_INFO = {c: _split_cat(c) for c in CATS}          # game.CATS label -> (key, label, emoji)
 
-RISK_META = {"konservativ": ("Konservativ", "🛡️"), "ausgewogen": ("Ausgewogen", "⚖️"), "risky": ("Mutig", "🚀")}
+RISK_META = {"konservativ": ("Conservative", "🛡️"), "ausgewogen": ("Balanced", "⚖️"), "risky": ("Bold", "🚀")}
 
 
 def _risk_text(s: Strategy) -> str:
-    months = f"{s.buffer_months:g} {'Monat' if s.buffer_months == 1 else 'Monate'}"
-    return f"{s.equity_share * 100:.0f} % Aktien, {months} Notgroschen"
+    months = f"{s.buffer_months:g} {'month' if s.buffer_months == 1 else 'months'}"
+    return f"{s.equity_share * 100:.0f} % stocks, {months} rainy-day fund"
 
 
 def rarity(xp: int) -> str:
@@ -100,6 +107,13 @@ def _play(pid: str, events: tuple, a: Assumptions, seed: int, now: int):
     return game.play(c.persons[pid], list(events), a, c, seed, now)
 
 
+@lru_cache(maxsize=64)
+def _drivers(pid: str, events: tuple, a: Assumptions, seed: int) -> list[dict]:
+    """Tornado rows (sorted ascending by impact) for the twin chat tool ``what_matters``."""
+    c = calibrate()
+    return tornado(c.persons[pid], list(events), YEARS, a, c, n_paths=200, seed=seed)[1]
+
+
 @lru_cache(maxsize=4096)
 def _preview(pid: str, events: tuple, key: str, month: int, a: Assumptions, seed: int) -> dict:
     c = calibrate()
@@ -139,6 +153,12 @@ class GameSession:
         self.anims: list[dict] = []
         self.achieved: set[str] = set()
         self.new_achievements: list[dict] = []
+        # Juli's analysis inside the game (CONTRACT "Extension")
+        self.groups: list[dict] = []           # decision groups {id, key, emoji, title, cat, turn, start_month, events}
+        self.chat: list[dict] = []             # Zwilling-Chat messages (last agent.MAX_MESSAGES kept)
+        self.chat_mode: str | None = None      # router of the last answer: 'llm' | 'offline'
+        self.dash_open = False
+        self.alt: dict | None = None           # {"kind": "moves", "moves": {gid: age}} | {"kind": "option", ...}
 
     def _changed(self) -> None:
         self.seq += 1
@@ -187,6 +207,7 @@ class GameSession:
         self.assumptions = Assumptions(strategy=STRATEGY_PRESETS[risk])
         self.phase = "play"
         self._check_achievements()
+        self._post_opener()
         self._changed()
 
     def choose(self, key: str) -> bool:
@@ -203,10 +224,14 @@ class GameSession:
             if locks.get(key) is not None:
                 return False
             delta = self._delta(key, m0)
-        self.events = self.events + opt.make(m0, snap)
+        new_events = opt.make(m0, snap)
+        self.events = self.events + new_events
         if key != "stay":
             self.done.add(key)
             self.badges[self.turn] = opt.emoji
+            self.groups.append({"id": f"d{len(self.groups) + 1}", "key": key, "emoji": opt.emoji,
+                                "title": opt.title, "cat": CAT_INFO[opt.cat][0], "turn": self.turn,
+                                "start_month": m0, "events": list(new_events), "movable": True})
         if key == "child":
             self.kids += 1
         self.xp += opt.xp
@@ -219,6 +244,10 @@ class GameSession:
         self._check_achievements()
         if self.turn >= YEARS:
             self.phase = "end"
+            self.dash_open = False          # the end starts on the life summary, not inside the dashboard
+        if self.alt and self.alt.get("kind") == "option":     # "this option now" is stale after a turn
+            self.alt = None
+        self._post_opener()
         self._changed()
         return True
 
@@ -254,7 +283,116 @@ class GameSession:
             self.restart()
         elif action == "analyse":
             return "analyse"
+        elif action == "chat":
+            self.ask(str(value.get("message") or ""))
+            self._changed()
+        elif action == "dashboard":
+            self.dash_open = bool(value.get("open", True)) and self.phase in ("play", "end")
+            self._changed()
+        elif action == "plan_edit":
+            self.plan_edit(value.get("moves") or {})
+            self._changed()
+        elif action == "plan_alt":
+            self.plan_alt(str(value.get("key") or ""))
+            self._changed()
+        elif action == "plan_reset":
+            self.alt = None
+            self._changed()
         return None
+
+    # ------------------------------------------------------------ Zwilling-Chat & dashboard
+    def _state_name(self, month: int | None = None) -> str:
+        month = min(12 * self.turn if month is None else month, 12 * YEARS)
+        return STATE_NAMES.get(snapshot(self._res(month), month).state, "other")
+
+    def _post_opener(self) -> None:
+        """When a new station starts, the twin opens it with a tip + question (Juli's STAGES)."""
+        if self.phase not in ("play", "end"):
+            return
+        studying = any(g["key"] in ("bachelor", "master", "lehre") for g in self.groups)
+        msg = agent.opener(self.phase, self._state_name(), self.turn, self.person.age + self.turn, studying)
+        self.chat = agent.trim(self.chat + [msg])
+
+    def _chat_ctx(self) -> agent.ChatCtx:
+        end = self.phase == "end"
+        month = 12 * YEARS if end else 12 * self.turn
+        res = self._res(month)
+        snap = snapshot(res, month)
+        ctx = self._ctx(res, month)
+        options = [{"key": o.key, "title": o.title, "emoji": o.emoji, "cat": CAT_INFO[o.cat][0],
+                    "locked": r, "joy": o.joy} for o, r in available(ctx)]
+        pid, a, seed = self.pid, self.assumptions, self.seed
+        return agent.ChatCtx(
+            phase=self.phase, start_age=self.person.age, age=self.person.age + self.turn, month=month,
+            state=STATE_NAMES.get(snap.state, "other"), events=tuple(self.events), groups=list(self.groups),
+            options=options, sim=lambda ev, fixed: _play(pid, tuple(ev), a, seed, int(fixed)),
+            make=lambda key: OPTION_BY_KEY[key].make(month, snap),
+            drivers=lambda ev=tuple(self.events): _drivers(pid, ev, a, seed),
+            turn=self.turn, end_age=self.person.age + YEARS, fixed=0 if end else month)
+
+    def ask(self, message: str) -> dict | None:
+        """Answer one chat message synchronously (both messages are appended to the thread)."""
+        message = message.strip()[:agent.MAX_QUESTION]
+        if self.phase not in ("play", "end") or not message:
+            return None
+        reply = agent.answer(self._chat_ctx(), message)
+        self.chat_mode = reply["mode"]
+        msg = {"role": "twin", "text": reply["text"], "tools": reply["tools"], "suggestion": reply["suggestion"],
+               "mode": reply["mode"]}
+        self.chat = agent.trim(self.chat + [{"role": "user", "text": message, "tools": [], "suggestion": None},
+                                            msg])
+        return msg
+
+    def plan_edit(self, moves) -> None:
+        """Move decision groups to new ages (merged with earlier moves) -> ``series.alt``."""
+        if self.phase not in ("play", "end") or not isinstance(moves, dict):
+            return
+        ids = {g["id"] for g in self.groups if g.get("movable", True)}
+        prev = self.alt["moves"] if self.alt and self.alt.get("kind") == "moves" else {}
+        merged = dict(prev)
+        for gid, age in moves.items():
+            if gid in ids and isinstance(age, (int, float)) and not isinstance(age, bool) and math.isfinite(age):
+                merged[gid] = float(age)
+        self.alt = {"kind": "moves", "moves": merged} if merged else None
+        self.dash_open = True
+
+    def plan_alt(self, key: str) -> None:
+        """Alternative = played plan + option ``key`` now (only while it is selectable)."""
+        if self.phase != "play" or key not in OPTION_BY_KEY or key == "stay":
+            return
+        m0 = 12 * self.turn
+        res = self._res(m0)
+        if dict((o.key, r) for o, r in available(self._ctx(res, m0))).get(key, "x") is not None:
+            return
+        self.alt = {"kind": "option", "key": key, "month": m0,
+                    "events": OPTION_BY_KEY[key].make(m0, snapshot(res, m0))}
+        self.dash_open = True
+
+    def _alt_events(self) -> tuple[list | None, str | None, dict]:
+        if not self.alt:
+            return None, None, {}
+        if self.alt["kind"] == "option":
+            opt = OPTION_BY_KEY[self.alt["key"]]
+            return (self.events + list(self.alt["events"]),
+                    f"Plan + {opt.title} at {self.person.age + self.alt['month'] // 12}", {})
+        moves = self.alt["moves"]
+        in_groups = {id(e) for g in self.groups for e in g["events"]}
+        rest = [e for e in self.events if id(e) not in in_groups]
+        moved, labels = dashboard.apply_moves(self.groups, moves, self.person.age)
+        return rest + moved, (" · ".join(labels) if labels else "Plan unchanged"), moves
+
+    def _dashboard_block(self) -> dict | None:
+        if not self.dash_open or self.phase not in ("play", "end"):
+            return None
+        alt_events, alt_label, moves = self._alt_events()
+        pid, seed = self.pid, self.seed
+        return dashboard.build(pid=pid, start_age=self.person.age, events=self.events, groups=self.groups,
+                               a=self.assumptions, seed=seed, phase=self.phase, turn=self.turn,
+                               alt_events=alt_events, alt_label=alt_label, moves=moves,
+                               sim=lambda ev, a, fixed: _play(pid, tuple(ev), a, seed, int(fixed)))
+
+    def _chat_block(self) -> dict:
+        return agent.chat_block(self.chat, self.phase, self.chat_mode)
 
     # ------------------------------------------------------------ payload pieces
     def _preview(self, key: str, month: int) -> dict:
@@ -299,7 +437,7 @@ class GameSession:
                 "xp_in_level": self.xp % XP_PER_LEVEL if lv < len(game.LEVELS) else XP_PER_LEVEL,
                 "xp_per_level": XP_PER_LEVEL, "xp_total": self.xp, "joy": self.joy, "joy_emoji": joy_label(self.joy),
                 "net_worth": snap.net_worth, "cash": snap.cash, "portfolio": snap.portfolio, "debt": snap.debt,
-                "income": snap.income, "state_de": STATE_DE.get(STATE_NAMES.get(snap.state, "other"), "anderes"),
+                "income": snap.income, "state_de": STATE_DE.get(STATE_NAMES.get(snap.state, "other"), "other"),
                 "achievements_got": len(self.achieved), "achievements_total": len(ACHIEVEMENTS)}
 
     def _cards(self, ctx: Ctx, month: int) -> tuple[list[dict], list[dict]]:
@@ -332,7 +470,7 @@ class GameSession:
                             "progress": float(min(1.0, max(0.0, snap.liquid / target))) if target else 1.0,
                             "done": snap.liquid >= target})
         free = credit <= 1
-        out.append({"name": "Schuldenfrei bleiben", "current": max(credit, 0.0), "target": 0.0,
+        out.append({"name": "Stay debt-free", "current": max(credit, 0.0), "target": 0.0,
                     "by_age": self.person.age + YEARS, "progress": 1.0 if free else 0.0, "done": free})
         return out
 
@@ -414,5 +552,8 @@ class GameSession:
                 out["play"] = self._play_block()
             elif self.phase == "end":
                 out["end"] = self._end_block()
+            if self.phase in ("play", "end"):
+                out[self.phase]["chat"] = self._chat_block()
+                out[self.phase]["dashboard"] = self._dashboard_block()
             self._payload = _clean(out)
         return self._payload
