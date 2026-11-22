@@ -27,13 +27,21 @@ The challenge data is **not** in this repo. By default it is read from `../ai-fi
 - `twin/scenarios.py`: life events (study, job, job change, unemployment, self-employment, house purchase, one-off) and presets
 - `twin/engine.py`: monthly simulation, shortfall rule (sell, then cut spending, then credit), metrics, accounting identity check
 - `twin/analysis.py`: tornado sensitivity with common random numbers
-- `app.py`: Streamlit UI (profile, life plan editor, Apollo-13 crisis buttons, fan chart, sensitivity, assumptions)
+- `app.py`: Streamlit UI (profile, life plan editor, fan chart, sensitivity, assumptions)
 - `ui/spiel.py`: game mode "Lebensweg": avatar creator, animated road board, yearly decision cards with twin previews, fate cards
-- `ui/analyse.py`: analysis dashboard ("Your twin" chat with the player's avatar, life chart, tips & investing)
+- `ui/analyse.py`: analysis dashboard ("Your twin" chat with the player's avatar, editable plan timeline, life chart,
+  tips; the expected-net-worth chart is always the last element of the page)
 - `twin/lifechart/`: offline Streamlit custom component (plain HTML/JS, no build step): net worth over age with p5–p95
   band, a comparison life path ("two life paths"), event markers and a per-month hover readout
 - `twin/analysis_chat.py`: the twin's chat. Our model computes every number (house at age X for price Y, strategy
   comparison, pillar 3a, job loss / crash, tornado, tips); a local open-source LLM via Ollama only picks the tool.
+  Tool `edit_plan`: tell the twin what should happen ("I buy a house at 35 for 800k", "add a child at 30", "move the
+  house to 40", "remove the gap year", "Ich gehe mit 62 in Rente") – it adds / moves / removes that life event on your
+  plan, says what it does to your net worth at the end (same seed) and returns `plan_edit` `[{op, key, age, params}]`,
+  which the page applies (the chat never changes state itself); the event is then draggable on the timeline. The LLM
+  only routes and parses (JSON schema: op, key, age, price, amount); the offline parser (English + German, 800k /
+  800'000 / 1.2M, "at 35" / "mit 35") is the fallback. Invalid requests (age outside the plan, unknown event) are
+  answered, not applied.
   Env: `TWIN_OLLAMA_URL` (default `http://127.0.0.1:11434`), `TWIN_OLLAMA_MODEL` (default `qwen3:4b`),
   `TWIN_OLLAMA_TIMEOUT` (default 8 s), `TWIN_CHAT_PHRASE=1` (optional rewording). Without Ollama a keyword router
   answers (English/German questions), so the demo never hangs. Answers end with "Not investment advice."
@@ -83,13 +91,17 @@ on the analysis page. "Get married" plays its own wedding scene (chapel, guests,
   3. **Try another path**: the twin's suggestions (`twin.alt_path.suggestions`: move a choice ±3/±5 years, drop a
      costly one, add one you did not take) – the best ▲ ones and at least two instructive ▼ ones, each with its CHF
      effect at 85. "Try it" puts it on the timeline; "↺ Reset" brings the played life back.
-  4. **Expected net worth** (Juli's chart): median with the p5–p95 band of your played path, the life you saw (pink)
-     and, once you edited something, the new path (orange), event markers, hover readout per age and the line
+  4. **Expected net worth** (Juli's chart), at the very bottom of the page (after "Explore more"): median with the
+     p5–p95 band of your played path, the life you saw (pink) and, once you edited something (on the timeline or by
+     telling the twin), the new path (orange), event markers, hover readout per age and the line
      "New path: +CHF X at 85 vs. your path". Same seed for both paths (common random numbers).
   The alternative path is a plain JSON dict in `st.session_state["alt_path"]` (`{"moves": {id: age}, "removed": [id],
   "added": [{id, key, age, params}]}`), reset when a new game is played. If `twin.alt_path` or the component is missing
   the page falls back to the read-only HTML timeline. Below, under "Explore more", the full dashboard stays as before.
-  Without a played game the page shows the timeline of its own life plan and the chat as before.
+  Without a played game the page starts with **YOUR PLAN**: this page's life plan (`st.session_state.events`, the
+  same list as "Explore more → Life plan") as the same editable timeline (drag, ✕, "+ Add event" with the game's
+  options via `twin.alt_path.option_events`), the chat (which can edit the plan too), and at the very bottom the
+  plan's expected net worth over the sidebar horizon – compared with "no events" once the plan has events.
 - `twin/review.py`: `review(game_session)` → `{verdict, timeline, positives, negatives, facts}`. The arrow and amount
   of a choice are the ones its card showed in the game (median at 85 with the choice minus "drive on" at that moment,
   same seed), so the timeline never contradicts the cards; `effect` = the whole-life effect (all played decisions WITH

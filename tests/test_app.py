@@ -8,7 +8,7 @@ from streamlit.testing.v1 import AppTest
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
 
 
-def test_app_runs_presets_crisis_and_tornado():
+def test_app_runs_presets_and_tornado():
     at = AppTest.from_file(APP, default_timeout=120).run()
     at.switch_page("ui/analyse.py").run()
     assert not at.exception
@@ -16,10 +16,22 @@ def test_app_runs_presets_crisis_and_tornado():
         at.selectbox(key="tpl").select(name).run()
         next(b for b in at.button if b.label == "Load template").click().run()
         assert not at.exception
-    next(b for b in at.button if "Job loss 6 months" in b.label).click().run()
-    assert not at.exception and at.radio[0].value == "Plan without crises"
     next(b for b in at.button if b.label == "Compute sensitivity").click().run()
     assert not at.exception
+
+
+def test_apollo13_and_investing_sections_are_gone():
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.switch_page("ui/analyse.py").run()
+    assert not at.exception, at.exception
+    subs = [h.value for h in at.subheader]
+    assert not any("Apollo" in v or "How could you invest" in v for v in subs)
+    assert not any("Job loss 6 months" in b.label or "Market crash −35" in b.label or b.label == "Remove crises"
+                   for b in at.button)
+    assert not at.radio and not any("Crisis in year" in sl.label for sl in at.slider)
+    assert [t.label for t in at.tabs][0] == "💡 Tips"
+    card = next(m.value for m in at.markdown if "TWIN VS. REALITY" in m.value)
+    assert "Fitted on months" not in card and "simulated futures per person" not in card
 
 
 def test_game_page_runs_and_links_to_analysis():
@@ -188,15 +200,135 @@ def test_life_review_try_another_path_round_trip(monkeypatch):
     assert "Back to the life you played" in at.session_state["twin_chat"][-1]["content"]
 
 
+def _plan_view(at) -> dict | None:
+    return _views(at).get("timeline")
+
+
+def _last_is_chart(at) -> dict:
+    """The expected-net-worth chart is the very last element of the page; returns its data."""
+    seq = _texts(at)
+    last = seq[-1]
+    if last.startswith("COMPONENT"):
+        args = json.loads(last.split(" ", 2)[2])
+        assert args["view"] == "chart", last[:200]
+        return args["data"]
+    assert False, f"last element is not the chart: {last[:200]}"
+
+
 def test_analysis_without_game_shows_plan_timeline():
     at = AppTest.from_file(APP, default_timeout=180).run()
     at.switch_page("ui/analyse.py").run()
     assert not at.exception, at.exception
     md = [m.value for m in at.markdown]
-    assert any("YOUR PLAN" in v for v in md) and not any("YOUR LIFE REVIEW" in v for v in md)
+    assert not any("YOUR LIFE REVIEW" in v for v in md)
+    plan = _plan_view(at)
+    assert plan is not None and plan["title"] == "YOUR PLAN" and plan["mode"] == "plan" and plan["items"] == []
+    assert plan["addable"] and plan["start_age"] == 24 and plan["end_age"] == 34
+    chart = _last_is_chart(at)
+    assert chart["alt"] is None and chart["names"]["played"] == "Your plan" and len(chart["ages"]) == 11
     at.selectbox(key="tpl").select("hauskauf").run()
     next(b for b in at.button if b.label == "Load template").click().run()
     assert not at.exception, at.exception
-    tl = next(v for v in (m.value for m in at.markdown) if "YOUR PLAN" in v)
-    assert "lr-mark" in tl and "🏡" in tl
+    plan = _plan_view(at)
+    assert any(it["emoji"] == "🏡" and it["kind"] == "decision" for it in plan["items"])
+    chart = _last_is_chart(at)
+    assert chart["alt"] is not None and chart["names"] == {"played": "No events", "alt": "Your plan",
+                                                           "life": "one simulated life",
+                                                           "alt_events": "Your plan's events"}
+    assert chart["metrics"]["alt_end"] == pytest.approx(chart["alt"]["p50"][-1], rel=0.05)
     assert at.session_state["twin_chat"][0]["tool"] == "tips"
+
+
+def test_plan_timeline_actions_without_game():
+    """Drag / remove / add on YOUR PLAN change st.session_state.events (the life plan below shows the same list)."""
+    from twin.scenarios import HouseBuy
+    at = AppTest.from_file(APP, default_timeout=180).run()
+    at.switch_page("ui/analyse.py").run()
+    at.selectbox(key="tpl").select("hauskauf").run()
+    next(b for b in at.button if b.label == "Load template").click().run()
+    house = next(it for it in _plan_view(at)["items"] if it["emoji"] == "🏡")
+    at.session_state["plan_action"] = {"action": "move", "id": house["id"], "age": 28}
+    at.run()
+    assert not at.exception, at.exception
+    ev = at.session_state["events"]
+    assert next(e for e in ev if isinstance(e, HouseBuy)).start == 48
+    assert at.session_state["twin_chat"][-1]["tool"] == "plan_timeline"
+    assert "I moved 🏡 Buy a home" in at.session_state["twin_chat"][-1]["content"]
+    at.session_state["plan_action"] = {"action": "add", "key": "child", "age": 30, "params": {"cost": 1500}}
+    at.run()
+    labels = [e.label for e in at.session_state["events"]]
+    assert "Child" in labels and "Child costs" in labels
+    child = next(it for it in _plan_view(at)["items"] if it["emoji"] == "👶")
+    at.session_state["plan_action"] = {"action": "remove", "id": child["id"]}
+    at.run()
+    assert [e.label for e in at.session_state["events"]] == ["Job", "House purchase"]
+    assert any("Year 4.0" in m.value and "House purchase" in m.value for m in at.markdown)   # "Explore more" list
+
+
+def test_chat_edits_the_plan_without_game(monkeypatch):
+    """“I buy a house at 30 for 800k” → the twin adds it to YOUR PLAN (draggable chip), the bottom chart compares
+    the plan with no events; then it moves and removes it on request."""
+    from twin.scenarios import HouseBuy
+    monkeypatch.setenv("TWIN_OLLAMA_URL", "http://127.0.0.1:9")
+    at = AppTest.from_file(APP, default_timeout=180).run()
+    at.switch_page("ui/analyse.py").run()
+    at.chat_input(key="twin_q").set_value("I buy a house at 30 for 800k").run()
+    assert not at.exception, at.exception
+    msg = at.session_state["twin_chat"][-1]
+    assert msg["tool"] == "edit_plan" and msg["plan_edit"] == [{"op": "add", "key": "buy_house", "age": 30,
+                                                                 "params": {"price": 800_000.0}}]
+    assert "I added 🏡 Buy a home (CHF 800'000) at 30" in msg["content"] and "vs. before" in msg["content"]
+    houses = [e for e in at.session_state["events"] if isinstance(e, HouseBuy)]
+    assert len(houses) == 1 and houses[0].start == 72 and houses[0].price == 800_000
+    n_chat = len(at.session_state["twin_chat"])
+    at.run()                                                              # a plain rerun applies nothing again
+    assert len([e for e in at.session_state["events"] if isinstance(e, HouseBuy)]) == 1
+    assert len(at.session_state["twin_chat"]) == n_chat
+    chip = next(it for it in _plan_view(at)["items"] if it["emoji"] == "🏡")
+    assert chip["movable"] and chip["age"] == 30 and "800'000" in chip["title"]
+    chart = _last_is_chart(at)
+    assert chart["alt"] is not None and any(mk["emoji"] == "🏡" and mk["age"] == 30 for mk in chart["markers"])
+    end = chart["metrics"]["alt_end"]
+    assert f"{end:,.0f}".replace(",", "'") in msg["content"]           # the reply's number = the chart's number
+
+    at.chat_input(key="twin_q").set_value("Verschiebe das Haus auf 32").run()
+    assert not at.exception, at.exception
+    assert [e.start for e in at.session_state["events"] if isinstance(e, HouseBuy)] == [96]
+    assert "I moved 🏡 Buy a home" in at.session_state["twin_chat"][-1]["content"]
+    at.chat_input(key="twin_q").set_value("retire at 62").run()           # outside the 10-year plan: said, not done
+    assert at.session_state["twin_chat"][-1]["plan_edit"] is None
+    assert "beyond your plan" in at.session_state["twin_chat"][-1]["content"]
+    at.chat_input(key="twin_q").set_value("remove the house").run()
+    assert at.session_state["events"] == []
+    assert _last_is_chart(at)["alt"] is None
+
+
+def test_chat_edits_the_new_path_after_a_game(monkeypatch):
+    """After a game the twin's plan edits go into the alternative path: draggable on YOUR TIMELINE, orange in the
+    chart at the very bottom."""
+    pytest.importorskip("twin.alt_path")
+    monkeypatch.setenv("TWIN_OLLAMA_URL", "http://127.0.0.1:9")
+    at = AppTest.from_file(APP, default_timeout=240).run()
+    _played_game(at)
+    at.switch_page("ui/analyse.py").run()
+    assert not at.exception, at.exception
+    assert _last_is_chart(at)["alt"] is None
+    at.chat_input(key="twin_q").set_value("I buy a house at 40 for 800k").run()
+    assert not at.exception, at.exception
+    msg = at.session_state["twin_chat"][-1]
+    assert msg["tool"] == "edit_plan" and "I added 🏡 Buy a home (CHF 800'000) at 40" in msg["content"]
+    alt = at.session_state["alt_path"]
+    assert alt["added"] == [{"id": "a1", "key": "buy_house", "age": 40, "params": {"price": 800_000}}]
+    tl = _views(at)["timeline"]
+    chip = next(it for it in tl["items"] if it["kind"] == "added")
+    assert chip["movable"] and chip["age"] == 40 and tl["has_alt"]
+    chart = _last_is_chart(at)
+    assert chart["alt"] is not None
+    assert f"{chart['metrics']['alt_end']:,.0f}".replace(",", "'") in msg["content"]
+
+    at.chat_input(key="twin_q").set_value("move the house to 45").run()
+    assert at.session_state["alt_path"]["added"][0]["age"] == 45
+    at.chat_input(key="twin_q").set_value("I don't want the wedding").run()
+    assert not at.exception, at.exception
+    assert at.session_state["alt_path"]["removed"] == ["d2"]
+    assert "out of your new path" in at.session_state["twin_chat"][-1]["content"]

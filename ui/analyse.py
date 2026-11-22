@@ -44,7 +44,6 @@ except Exception:                                   # pragma: no cover
 
 # chart colours (validated categorical slots 1/2 + blue sequential steps for the bands)
 BLUE, ORANGE = "#2a78d6", "#eb6834"
-CRISIS_PREFIX = "Crisis: "
 CHAT_PATHS = 1000          # paths per simulation the twin chat runs (fast enough to answer within a second)
 
 EVENT_TYPES = {
@@ -141,9 +140,13 @@ a = Assumptions(market=market, strategy=strategy, macro=macro, shortfall=shortfa
 #   another path (twin/lifereview component, twin/alt_path engine) → (2) YOUR TWIN SAYS: the player's own 3D character
 #   on its podium delivers what went well and where to do better (twin.review), chat underneath → (3) TRY ANOTHER PATH:
 #   the twin's suggestions (▲ more money at 85 / ▼ less) – "Try it" puts one on the timeline → (4) EXPECTED NET WORTH:
-#   the played path vs the new path (Juli's chart). Without a played game: the timeline of this page's life plan and
-#   the chat as before. Every new piece is guarded: if alt_path / lifereview are missing or fail, the page falls back
-#   to today's read-only timeline and never breaks.
+#   the played path vs the new path (Juli's chart) – drawn at the VERY BOTTOM of the page (after "Explore more").
+#   Without a played game: YOUR PLAN = this page's life plan (st.session_state.events) as the same editable
+#   timeline (drag / ✕ / "+ Add event", twin.alt_path.plan_*), the chat, and at the bottom the plan's expected net
+#   worth (vs. "no events" once the plan has events). In both cases the chat can edit the plan: "I buy a house at 35
+#   for 800k" -> the twin's answer carries a ``plan_edit`` that THIS page applies (alt path after a game, else the
+#   events). Every new piece is guarded: if alt_path / lifereview are missing or fail, the page falls back to
+#   read-only HTML and never breaks.
 EVENT_EMOJI = {"Study": "🎓", "Job": "💼", "JobChange": "🚀", "Unemployment": "📉", "SelfEmployment": "🧑‍💻",
                "HouseBuy": "🏡", "OneOff": "🧾", "ExpenseChange": "🧾", "MarketCrash": "💥", "Retirement": "🪑"}
 EMPTY_ALT = {"moves": {}, "removed": [], "added": []}
@@ -174,14 +177,12 @@ def life_review(sess) -> dict | None:
 
 
 def plan_items(evs, start_age: int) -> list[dict]:
-    """The page's life-plan events as timeline chips (no effect arrows: nothing was played)."""
+    """The page's life-plan events as read-only HTML chips (fallback when the timeline component is missing)."""
     out = []
     for e in evs:
         age = round(start_age + e.start / 12, 1)
-        label = e.label[len(CRISIS_PREFIX):] if e.label.startswith(CRISIS_PREFIX) else e.label
         out.append({"age": int(age) if float(age).is_integer() else age,
-                    "emoji": "⚡" if e.label.startswith(CRISIS_PREFIX) else EVENT_EMOJI.get(type(e).__name__, "📌"),
-                    "title": label})
+                    "emoji": EVENT_EMOJI.get(type(e).__name__, "📌"), "title": e.label})
     return out
 
 
@@ -408,10 +409,12 @@ def pct_or_none(x) -> str | None:
 
 
 def paths_figure(paths: dict) -> go.Figure:
-    """Fallback chart (plotly) from ``alt_path.simulate_paths``: band + medians + the played life."""
+    """Fallback chart (plotly) from ``alt_path.simulate_paths`` (or the plan's chart data): band + medians + life."""
     ages = paths["ages"]
+    names = paths.get("names") or {}
     f = go.Figure()
-    for key_, colour, name in (("played", BLUE, "Your path"), ("alt", ORANGE, paths.get("label") or "New path")):
+    for key_, colour, name in (("played", BLUE, names.get("played") or "Your path"),
+                               ("alt", ORANGE, paths.get("label") or names.get("alt") or "New path")):
         s_ = paths.get(key_)
         if not s_:
             continue
@@ -424,7 +427,7 @@ def paths_figure(paths: dict) -> go.Figure:
                                name=f"{name} (median)", hovertemplate="%{y:,.0f} CHF"))
     life = (paths.get("played") or {}).get("life")
     if life:
-        f.add_trace(go.Scatter(x=ages, y=life, line=dict(width=2, color="#e2558f"), name="Your life",
+        f.add_trace(go.Scatter(x=ages, y=life, line=dict(width=2, color="#e2558f"), name=names.get("life") or "Your life",
                                hovertemplate="%{y:,.0f} CHF"))
     f.update_layout(height=420, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10),
                     legend=dict(orientation="h", y=-0.18), xaxis=dict(title="Age", showgrid=False),
@@ -432,11 +435,109 @@ def paths_figure(paths: dict) -> go.Figure:
     return f
 
 
-events = tuple(st.session_state.events)
+# ---------------------------------------------------------------- the page's own life plan (no game): editable timeline
+PLAN_ACTIONS = ("move", "remove", "add")
+
+
+def plan_end(evs) -> float:
+    """Median net worth at the end of the horizon for a plan (the bottom chart's simulation: same paths and seed)."""
+    return float(run(person, tuple(evs), years, a, n_paths, seed).metrics["median_net_worth_end"])
+
+
+def handle_plan_action(act) -> bool:
+    """Apply one timeline action (move / remove / add) to ``st.session_state.events``; True if the plan changed.
+    The twin announces the change with its effect on the net worth (``plan_note``)."""
+    if alt_mod is None or not isinstance(act, dict) or act.get("action") not in PLAN_ACTIONS:
+        return False
+    old = list(st.session_state.events)
+    items = {str(it["id"]): it for it in alt_call("plan_items", person, old, years, default=[]) or []}
+    new = alt_call("plan_apply_action", person, old, act, years, a, default=None)
+    if not isinstance(new, list) or new == old:
+        return False
+    it = items.get(str(act.get("id")), {})
+    name = item_title(it) or "this event"
+    if act["action"] == "move":
+        note = f"I moved {name} to age {int(round(float(act.get('age'))))}."
+    elif act["action"] == "remove":
+        note = f"I took {name} out of your plan."
+    else:
+        key_ = str(act.get("key"))
+        title = alt_call("option_title", key_, act.get("params") or {}, default=key_)
+        note = f"I added {title} at age {int(round(float(act.get('age'))))}."
+    st.session_state.events = new
+    try:
+        b_, a_ = plan_end(old), plan_end(new)
+        note += (f" Your plan now ends at {money(a_)} at {person.age + years} – {money_delta(a_ - b_)} compared with "
+                 f"before (median, same random numbers).")
+    except Exception:
+        log.exception("plan note: simulation failed")
+    st.session_state["plan_note"] = note
+    return True
+
+
+def plan_timeline() -> None:
+    """YOUR PLAN: the page's life plan as the editable lifereview timeline (read-only HTML as the fallback)."""
+    evs = list(st.session_state.events)
+    items = alt_call("plan_items", person, evs, years, default=None) if alt_mod is not None else None
+    if isinstance(items, list):
+        act = show_component("timeline", {
+            "start_age": person.age, "end_age": person.age + years, "items": items,
+            "addable": alt_call("plan_addable", person, years, default=[]) or [], "has_alt": False, "mode": "plan",
+            "title": "YOUR PLAN",
+            "hint": "Drag an event to another age, remove it with ✕ or add a new one – or tell your twin below what "
+                    "should happen (“I buy a house at 35 for 800k”).",
+            "empty": "No events yet – press “+ Add event” or tell your twin what should happen, e.g. “add a child "
+                     "at 30”."}, key="lr_plan", height=330)
+        if act is not False:
+            if handle_plan_action(act):
+                st.rerun()
+            st.caption("Your net worth for this plan is at the very bottom of the page. The same list is under "
+                       "“Explore more → Life plan”.")
+            return
+    st.markdown(timeline_html(plan_items(evs, person.age), person.age, person.age + years, "YOUR PLAN",
+                              empty="No events yet – add some in the life plan below."), unsafe_allow_html=True)
+
+
+def apply_plan_edits(edits) -> bool:
+    """Apply the chat's ``plan_edit`` list: to the alternative path after a game, else to the page's events.
+    Same ``twin.alt_path`` functions the chat used for its numbers. True if something changed."""
+    if alt_mod is None or not isinstance(edits, list) or not edits:
+        return False
+    if rv:
+        if alt is None:                           # no alternative path engine: nothing to edit after a game
+            return False
+        old = clean_alt(st.session_state.get("alt_path"))
+        new = old
+        for e in edits:
+            out = alt_call("alt_apply_chat_edit", game, new, e, default=None)
+            if isinstance(out, tuple) and out[1].get("ok"):
+                new = out[0]
+        new = clean_alt(new)
+        if new == old:
+            return False
+        st.session_state["alt_path"] = new
+        return True
+    old = list(st.session_state.events)
+    new = old
+    for e in edits:
+        out = alt_call("plan_apply_edit", person, new, e, years, a, default=None)
+        if isinstance(out, tuple) and out[1].get("ok"):
+            new = out[0]
+    if new == old:
+        return False
+    st.session_state.events = list(new)
+    return True
+
+
 is_me = pid == "__me__" and game is not None
+rv = life_review(game) if is_me else None
+if not rv:
+    pending = st.session_state.pop("plan_action", None)          # programmatic action (tests, other widgets)
+    if pending is not None:
+        handle_plan_action(pending)
+events = tuple(st.session_state.events)
 cfg = dict(getattr(game, "avatar", None) or {}) if is_me else {"name": person.name}
 ride = getattr(game, "ride_data", None) if is_me else None
-rv = life_review(game) if is_me else None
 alt = None                      # alt state of the played game (None without a played game or without alt_path)
 alt_items: list[dict] | None = None
 paths = None
@@ -499,8 +600,7 @@ if rv:
 else:
     st.markdown(hero_html("YOUR FINANCIAL TWIN", f"{person.name}, {person.age} · {years} years ahead", None,
                           tag="ANALYSIS"), unsafe_allow_html=True)
-    st.markdown(timeline_html(plan_items(events, person.age), person.age, person.age + years, "YOUR PLAN",
-                              empty="No events yet – add some in the life plan below."), unsafe_allow_html=True)
+    plan_timeline()
 
 
 def alt_suggestions() -> list[dict]:
@@ -525,7 +625,9 @@ chat_ctx = ChatCtx(
     sim=lambda ev, yrs, a_: run(person, tuple(ev), yrs, a_, CHAT_PATHS, seed),
     tips_fn=lambda: run_tips(person, years, a, seed),
     drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed),
-    suggest_fn=alt_suggestions if (rv and alt is not None) else None)
+    suggest_fn=alt_suggestions if (rv and alt is not None) else None,
+    game=game if (rv and alt is not None) else None, alt=alt,
+    plan_sim=None if rv else (lambda ev: run(person, tuple(ev), years, a, n_paths, seed)))
 chat_key = (pid, person, rv["verdict"]["text"] if rv else None)
 if st.session_state.get("twin_chat_key") != chat_key:
     g = greeting(chat_ctx)
@@ -546,15 +648,22 @@ if rv and st.session_state.get("alt_note"):
     st.session_state.twin_chat.append({"role": "assistant", "content": f"{note} Not investment advice.",
                                        "mode": "offline", "tool": "alt_path"})
     st.session_state.twin_chat = st.session_state.twin_chat[-40:]
+if not rv and st.session_state.get("plan_note"):
+    st.session_state.twin_chat.append({"role": "assistant", "content": f"{st.session_state.pop('plan_note')} "
+                                                                       "Not investment advice.",
+                                       "mode": "offline", "tool": "plan_timeline"})
+    st.session_state.twin_chat = st.session_state.twin_chat[-40:]
 
 
-def ask(question: str) -> None:
+def ask(question: str) -> bool:
+    """Ask the twin; a plan edit in its answer is applied to the plan here (True = rerun to show it)."""
     st.session_state.twin_chat.append({"role": "user", "content": question})
     with st.spinner("Your twin is calculating …"):
         out = answer(chat_ctx, question)
     st.session_state.twin_chat.append({"role": "assistant", "content": out["text"], "mode": out["mode"],
-                                       "tool": out["tool"]})
+                                       "tool": out["tool"], "plan_edit": out.get("plan_edit")})
     st.session_state.twin_chat = st.session_state.twin_chat[-40:]
+    return apply_plan_edits(out.get("plan_edit"))
 
 
 def chat_box(height: int) -> None:
@@ -562,14 +671,15 @@ def chat_box(height: int) -> None:
     box = st.container(height=height)
     pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
                     label_visibility="collapsed")
-    question = st.chat_input("Ask your twin – e.g. “What could I have done better?”" if rv else
-                             "Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
+    question = st.chat_input("Ask your twin – e.g. “What could I have done better?” or “I buy a house at 40”" if rv
+                             else "Ask your twin – or tell it what should happen: “I buy a house at 35 for 800k”",
+                             key="twin_q")
     if pick:
         ask(pick)
         st.session_state.twin_pick_n += 1
         st.rerun()
-    if question:
-        ask(question)
+    if question and ask(question):
+        st.rerun()                                # the plan changed: show it on the timeline and in the chart
     with box:
         for msg in st.session_state.twin_chat:
             with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
@@ -586,19 +696,14 @@ def llm_caption() -> None:
 
 st.markdown("""<style>
 .twin-av { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.twin-bubble { position: relative; width: 100%; padding: 10px 13px; border-radius: 16px; font-size: .9rem;
-  line-height: 1.4; background: rgba(42,120,214,.10); border: 1px solid rgba(42,120,214,.35); }
-.twin-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px;
-  transform: translateX(-50%) rotate(45deg); background: inherit; border-right: inherit; border-bottom: inherit;
-  backdrop-filter: inherit; }
 .twin-av svg { max-width: 150px; height: auto; }
 </style>""", unsafe_allow_html=True)
 
 
 def svg_avatar(bubble: str) -> None:
     av = avatar_from_cfg(cfg, person.name)
-    st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble)}</div>'
-                f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="twin-av">{avatar_svg(av, size=150, uid="twin")}</div>',   # no speech bubble:
+                unsafe_allow_html=True)                                                  # the text is in the chat
 
 
 if rv:
@@ -653,49 +758,6 @@ if rv:
             if handle_alt_action({"action": "reset"}, start_age, end_age):
                 st.rerun()
 
-    # ---- (4) expected net worth: the played path vs the new path (Juli's chart), at the very bottom of the review
-    if paths:
-        has_alt = bool(paths.get("alt"))
-        st.markdown(subheading_html(
-            "EXPECTED NET WORTH",
-            f"Median of the simulated lives from {start_age} to {end_age} with the band where 90 % of them end up; "
-            "pink = the life you played" + ("; orange = your new path." if has_alt else
-                                            ". Change your timeline to compare another path.")),
-            unsafe_allow_html=True)
-        pe, ae, de = alt_metrics.get("played_end"), alt_metrics.get("alt_end"), alt_metrics.get("delta_end")
-        tiles = []
-        if pe is not None:
-            tiles.append({"label": f"YOUR PATH AT {end_age}", "value": money(pe), "sub": "median net worth",
-                          "tone": "blue"})
-        if has_alt and ae is not None and de is not None:
-            tiles.append({"label": f"NEW PATH AT {end_age}", "value": money(ae),
-                          "sub": f"{money_delta(de)} vs. your path", "tone": "up" if de > 0 else "down" if de < 0
-                          else "flat"})
-        pc, ac_ = pct_or_none(alt_metrics.get("played_credit")), pct_or_none(alt_metrics.get("alt_credit"))
-        if pc is not None:
-            tiles.append({"label": "NEEDS CREDIT", "value": pc if not (has_alt and ac_) else f"{pc} → {ac_}",
-                          "sub": "share of lives with a loan at some point" + (" (your path → new path)"
-                                                                                if has_alt and ac_ else ""),
-                          "tone": "orange" if has_alt else "flat"})
-        if tiles:
-            st.markdown(tiles_html(tiles), unsafe_allow_html=True)
-        summary = (f"New path: {money_delta(de)} at {end_age} vs. your path" if has_alt and de is not None else
-                   f"Your path: {money(pe)} at {end_age} (median)" if pe is not None else "")
-        try:                                   # the component's own marker format (played / alt ages)
-            from twin.lifereview import chart_markers
-            markers = chart_markers(alt_items or [], has_alt=has_alt)
-        except Exception:
-            markers = [{"age": float(it.get("alt_age") if it.get("alt_age") is not None else it.get("age", 0)),
-                        "path": "alt" if it.get("alt_age") is not None or it.get("kind") == "added" else "played",
-                        "emoji": it.get("emoji") or "", "label": it.get("title") or ""}
-                       for it in alt_items or [] if not it.get("removed")]
-        if show_component("chart", {**paths, "markers": markers, "summary": summary, "start_age": start_age,
-                                    "end_age": end_age}, key="lr_chart", height=460) is False:
-            st.plotly_chart(paths_figure(paths), width="stretch", theme="streamlit")
-            if summary:
-                st.markdown(f"**{summary}**")
-        st.caption("Same random numbers for both paths (common random numbers), so the difference comes only from "
-                   "your changes. Net worth = cash + investments + home − debts. Not investment advice.")
 else:
     st.markdown(heading_html("YOUR TWIN"), unsafe_allow_html=True)
     with st.container(border=True):
@@ -704,7 +766,8 @@ else:
             chat_box(330)
         with av_col:
             last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
-            svg_avatar(bubble_text(last or {}))
+            if not show_podium(cfg, bubble_text(last or {})):     # 3D character, speaks the newest answer
+                svg_avatar(bubble_text(last or {}))
             llm_caption()
 
 
@@ -719,7 +782,7 @@ except Exception:                                   # never break the page for t
 
 # ================================================================ explore more (the full dashboard)
 st.header("🔍 Explore more")
-st.caption("Your data, a life plan, crises and all the charts – the assumptions are in the sidebar. "
+st.caption("Your data, the life plan and all the charts – the assumptions are in the sidebar. "
            "Don't predict the future – make it explorable. Synthetic data, not investment advice.")
 
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -731,7 +794,7 @@ c5.metric("Typical month (data)", chf(person.mu), help=f"± {chf(person.mu_se)} 
           f"fluctuation {chf(person.sigma)} per month; expenses ~ {chf(person.expenses)}")
 
 # ================================================================ scenario builder
-left, right = st.columns([3, 2], gap="large")
+left = st.container()               # the same list as YOUR PLAN at the top (st.session_state.events)
 with left:
     st.subheader("🗺️ Life plan")
     pc1, pc2 = st.columns([3, 1])
@@ -790,42 +853,13 @@ with left:
             st.session_state.events.append(new)
             st.rerun()
 
-with right:
-    st.subheader("🚨 Apollo 13 mode")
-    st.caption("Throw in a crisis and see how the plan copes.")
-    crisis_year = st.slider("Crisis in year", 0.0, float(max(years - 1, 0)), min(5.0, float(max(years - 1, 0))), 0.5)
-    tc = int(round(crisis_year * 12))
-    k1, k2 = st.columns(2)
-    crises = {
-        "💥 Market crash −35 %": MarketCrash(tc, -0.35, CRISIS_PREFIX + "Market crash"),
-        "📉 Job loss 6 months": Unemployment(tc, 6, CRISIS_PREFIX + "Job loss"),
-        "🧾 Bill CHF 10'000": OneOff(tc, 10_000, CRISIS_PREFIX + "Bill"),
-        "🏠 Rent +400 CHF/month": ExpenseChange(tc, 400, CRISIS_PREFIX + "Rent increase"),
-    }
-    for j, (lbl, ev) in enumerate(crises.items()):
-        if (k1 if j % 2 == 0 else k2).button(lbl, width="stretch"):
-            st.session_state.events.append(ev)
-            st.rerun()
-    has_crisis = any(e.label.startswith(CRISIS_PREFIX) for e in st.session_state.events)
-    if has_crisis and st.button("Remove crises", width="stretch"):
-        st.session_state.events = [e for e in st.session_state.events if not e.label.startswith(CRISIS_PREFIX)]
-        st.rerun()
-    compare = st.radio("Compare with",
-                       ["Plan without crises", "No events (carry on as before)", "No comparison"],
-                       index=0 if has_crisis else 1)
-
 # ================================================================ simulate
 events = tuple(st.session_state.events)
 with st.spinner("Simulating …"):
     res = run(person, events, years, a, n_paths, seed)
-    ref_events = None
-    if compare == "Plan without crises":
-        ref_events = tuple(e for e in events if not e.label.startswith(CRISIS_PREFIX))
-    elif compare.startswith("No events"):
-        ref_events = ()
-    ref = run(person, ref_events, years, a, n_paths, seed) if ref_events is not None and ref_events != events else None
+    ref = run(person, (), years, a, n_paths, seed) if events else None      # comparison: no events (carry on)
 
-# ================================================================ KPIs
+# ================================================================ KPIs (deltas: vs. no events)
 m, rm = res.metrics, (ref.metrics if ref else None)
 k = st.columns(5)
 k[0].metric(f"Net worth in {years} y (median)", chf(m["median_net_worth_end"]),
@@ -863,7 +897,7 @@ def base_layout(fig, title, h=420):
     return fig
 
 
-tab0, tab1, tab2, tab3, tab4 = st.tabs(["💡 Tips & investing", "📊 Net worth", "🌪️ What matters most?",
+tab0, tab1, tab2, tab3, tab4 = st.tabs(["💡 Tips", "📊 Net worth", "🌪️ What matters most?",
                                          "📋 Plan & goals", "🔍 Assumptions"])
 
 with tab0:
@@ -874,32 +908,11 @@ with tab0:
     box = {"warn": st.warning, "do": st.info, "good": st.success}
     for t in tp["tips"]:
         box[t["kind"]](f"**{t['title']}** – {t['text']}", icon=t["icon"])
-    st.subheader("📈 How could you invest?")
-    st.caption("Same person, same random numbers – only the investment style changes. Choose your style in the "
-               "sidebar (🧭 Strategy) and fine-tune it there.")
-    so = tp["styles"]
-    f = go.Figure()
-    f.add_trace(go.Bar(x=[s_["label"] for s_ in so], y=[s_["median"] for s_ in so], marker=dict(color=BLUE, cornerradius=6),
-                       error_y=dict(type="data", symmetric=False, array=[s_["p95"] - s_["median"] for s_ in so],
-                                    arrayminus=[s_["median"] - s_["p5"] for s_ in so], color="rgba(128,128,128,.6)"),
-                       hovertemplate="%{x}: median %{y:,.0f} CHF<extra></extra>", name="median"))
-    base_layout(f, f"Net worth after {years} years by investment style (median, p5–p95)", 360)
-    f.update_layout(hovermode="closest", xaxis=dict(title=None), showlegend=False)
-    st.plotly_chart(f, width="stretch", theme="streamlit")
-    st.dataframe(pd.DataFrame([{"Style": s_["label"], "Stocks": f"{s_['equity']:.0%}" if s_["invests"] else "–",
-                                "Emergency fund": f"{s_['buffer']:g} months", "Median": chf(s_["median"]),
-                                "Range p5–p95": f"{chf(s_['p5'])} – {chf(s_['p95'])}",
-                                "Chance of credit": f"{s_['p_credit']:.0%}"} for s_ in so]),
-                 hide_index=True, width="stretch")
 
 with tab1:
     st.markdown("**Net worth over your life** – hover (or use the arrow keys) for the numbers at every age, and "
                 "switch between two life paths above the chart.")
-    comps = []
-    if ref is not None:
-        comps.append(("ref", "Without crises" if compare == "Plan without crises" else "Without life events", ref))
-    if events and ref_events != ():
-        comps.append(("none", "Without life events", run(person, (), years, a, n_paths, seed)))
+    comps = [("none", "Without life events", ref)] if ref is not None else []
     other_key = "konservativ" if strat_name == "risky" else "risky"
     for key_, label_, strat_ in STYLES:
         if key_ in ("cash", other_key):
@@ -907,8 +920,7 @@ with tab1:
                           f"{label_.split(' ', 1)[1]} investing",
                           run(person, events, years, a.with_(strategy=strat_), n_paths, seed)))
     life_chart(chart_data(res, comps, start_age=person.age, plan_label="Your plan",
-                          default_comp="ref" if ref is not None else None, hide_label_prefix=CRISIS_PREFIX),
-               key="lifechart")
+                          default_comp="none" if ref is not None else None), key="lifechart")
     st.caption("Band: 90 % of the simulated lives (p5–p95). Thin grey line: one simulated life. Dashed: the second "
                "life path – same random numbers, only the plan or the investment style differs. Net worth = "
                "cash + portfolio + house − mortgage − loans.")
@@ -921,7 +933,7 @@ with tab1:
                                hovertemplate="%{y:,.0f} CHF"))
         if ref:
             f.add_trace(go.Scatter(x=x, y=ref.percentiles[key][2], line=dict(width=2, color=ORANGE, dash="dash"),
-                                   name="Comparison", hovertemplate="%{y:,.0f} CHF"))
+                                   name="Without life events", hovertemplate="%{y:,.0f} CHF"))
         col.plotly_chart(base_layout(f, title, 280), width="stretch", theme="streamlit")
 
     with st.expander("Table (end of year)"):
@@ -994,3 +1006,106 @@ with tab4:
     st.info("Limits: the data is synthetic and covers only 24 months. Links between groups "
             "(e.g. student → employed) are comparisons between people, not causes. Results show "
             "ranges of possible paths – not a forecast and not investment advice.", icon="ℹ️")
+
+
+# ================================================================ expected net worth – ALWAYS the last element
+# After a played game: the played path vs the new path (alt_path.simulate_paths). Without a game: this page's plan
+# (sidebar horizon, the same simulation as "Explore more") vs. "no events" once the plan has events.
+def yearly(arr) -> list[float]:
+    return [float(arr[min(12 * i, len(arr) - 1)]) for i in range(years + 1)]
+
+
+def series_of(r, life: bool = True) -> dict:
+    p_ = r.percentiles["net_worth"]
+    lf = (r.path0 or {}).get("net_worth") if life else None
+    return {"p5": yearly(p_[0]), "p50": yearly(p_[2]), "p95": yearly(p_[4]),
+            "life": yearly(lf) if lf is not None else None}
+
+
+def plan_chart_data() -> dict:
+    """Chart data (lifereview "chart" format) for the page's own plan: blue = no events, orange = your plan (or
+    blue = your plan alone while it has no events)."""
+    end_ = person.age + years
+    items = alt_call("plan_items", person, list(events), years, default=[]) or []
+    has_plan = ref is not None
+    markers = [{"age": float(it["age"]), "path": "alt" if has_plan else "played", "emoji": it.get("emoji") or "",
+                "label": it.get("title") or ""} for it in items if it.get("kind") == "decision"]
+    if has_plan:
+        played_s, alt_s = series_of(ref, life=False), series_of(res)
+        names = {"played": "No events", "alt": "Your plan", "life": "one simulated life",
+                 "alt_events": "Your plan's events"}
+        pe, ae = rm["median_net_worth_end"], m["median_net_worth_end"]
+        metrics = {"played_end": pe, "alt_end": ae, "delta_end": ae - pe, "played_credit": rm["p_ever_credit"],
+                   "alt_credit": m["p_ever_credit"]}
+    else:
+        played_s, alt_s = series_of(res), None
+        names = {"played": "Your plan", "life": "one simulated life", "played_events": "Your plan's events"}
+        metrics = {"played_end": m["median_net_worth_end"], "alt_end": None, "delta_end": None,
+                   "played_credit": m["p_ever_credit"], "alt_credit": None}
+    return {"ages": [person.age + i for i in range(years + 1)], "played": played_s, "alt": alt_s,
+            "label": None, "metrics": metrics, "names": names, "markers": markers, "start_age": person.age,
+            "end_age": end_}
+
+
+def net_worth_section() -> None:
+    if rv:
+        if not paths:
+            return
+        data, s_age, e_age = dict(paths), start_age, end_age
+        mt = alt_metrics
+        has_alt = bool(paths.get("alt"))
+        names = {"played": "Your path", "alt": "New path"}
+        sub = (f"Median of the simulated lives from {s_age} to {e_age} with the band where 90 % of them end up; "
+               "pink = the life you played" + ("; orange = your new path." if has_alt else
+                                               ". Change your timeline – or tell your twin – to compare another path."))
+        try:                                   # the component's own marker format (played / alt ages)
+            from twin.lifereview import chart_markers
+            data["markers"] = chart_markers(alt_items or [], has_alt=has_alt)
+        except Exception:
+            data["markers"] = [{"age": float(it.get("alt_age") if it.get("alt_age") is not None else it.get("age", 0)),
+                                "path": "alt" if it.get("alt_age") is not None or it.get("kind") == "added"
+                                else "played", "emoji": it.get("emoji") or "", "label": it.get("title") or ""}
+                               for it in alt_items or [] if not it.get("removed")]
+    else:
+        data = plan_chart_data()
+        s_age, e_age, mt = data["start_age"], data["end_age"], data["metrics"]
+        has_alt = data["alt"] is not None
+        names = {"played": "No events" if has_alt else "Your plan", "alt": "Your plan"}
+        sub = (f"Your plan from {s_age} to {e_age} (planning horizon in the sidebar): median of the simulated lives "
+               "with the band where 90 % of them end up" +
+               ("; orange = your plan, blue = no events (carry on as today)." if has_alt else
+                "; pink = one simulated life. Add events on YOUR PLAN – or tell your twin – to compare."))
+    st.markdown(subheading_html("EXPECTED NET WORTH", sub + " Same random numbers for both paths, so the difference "
+                                "comes only from the plan. Net worth = cash + investments + home − debts. Not "
+                                "investment advice."), unsafe_allow_html=True)
+    pe, ae, de = mt.get("played_end"), mt.get("alt_end"), mt.get("delta_end")
+    tiles = []
+    if pe is not None:
+        tiles.append({"label": f"{names['played'].upper()} AT {e_age}", "value": money(pe), "sub": "median net worth",
+                      "tone": "blue"})
+    if has_alt and ae is not None and de is not None:
+        tiles.append({"label": f"{names['alt'].upper()} AT {e_age}", "value": money(ae),
+                      "sub": f"{money_delta(de)} vs. {names['played'].lower()}",
+                      "tone": "up" if de > 0 else "down" if de < 0 else "flat"})
+    pc, ac_ = pct_or_none(mt.get("played_credit")), pct_or_none(mt.get("alt_credit"))
+    if pc is not None:
+        both = has_alt and ac_ is not None
+        tiles.append({"label": "NEEDS CREDIT", "value": f"{pc} → {ac_}" if both else pc,
+                      "sub": "share of lives with a loan at some point" +
+                             (f" ({names['played'].lower()} → {names['alt'].lower()})" if both else ""),
+                      "tone": "orange" if has_alt else "flat"})
+    if tiles:
+        st.markdown(tiles_html(tiles), unsafe_allow_html=True)
+    summary = (f"{names['alt']}: {money_delta(de)} at {e_age} vs. {names['played'].lower()}" if has_alt and de is not None
+               else f"{names['played']}: {money(pe)} at {e_age} (median)" if pe is not None else "")
+    data.update(summary=summary, start_age=s_age, end_age=e_age)
+    if show_component("chart", data, key="lr_chart", height=460) is False:
+        if summary:
+            st.markdown(f"**{summary}**")
+        st.plotly_chart(paths_figure(data), width="stretch", theme="streamlit")
+
+
+try:
+    net_worth_section()
+except Exception:                                   # never break the page for the chart
+    log.exception("net worth chart failed")

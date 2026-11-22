@@ -23,7 +23,10 @@ Every number is our simulation: ``game.play`` / ``engine.simulate`` with the gam
 paths and re-checked with the full count). Results are cached.
 
 Public API: ``EMPTY``, ``normalize``, ``apply_edit``, ``apply_action``, ``timeline_items``, ``addable``,
-``alt_events``, ``simulate_paths``, ``suggestions``.
+``alt_events``, ``simulate_paths``, ``suggestions``; edits by key + age as the twin chat sends them:
+``alt_apply_chat_edit`` (played game). The analysis page's OWN life plan (no game: a plain list of events) uses the
+same options: ``option_events``, ``plan_groups``, ``plan_items``, ``plan_addable``, ``plan_apply_action`` (timeline
+component actions) and ``plan_apply_edit`` (chat edits).
 """
 from __future__ import annotations
 
@@ -41,7 +44,8 @@ from . import review as rv
 from .calibration import calibrate
 from .config import EMPLOYED, SELF_EMPLOYED
 from .engine import simulate
-from .scenarios import ExpenseChange, Job, Retirement, SelfEmployment, Study, Unemployment, build_plan
+from .scenarios import (ExpenseChange, HouseBuy, Job, JobChange, OneOff, Retirement, SelfEmployment, Study,
+                        Unemployment, build_plan)
 
 EMPTY = {"moves": {}, "removed": [], "added": []}
 SCREEN_PATHS = 150          # suggestions: first screen with fewer paths ...
@@ -324,22 +328,30 @@ def _added_events(inp: rv.Inputs, base: list, added: list, done: set, kids: int)
     # game.assume_degree_jobs) unless the path already decides what comes next – else a what-if degree would mean
     # "never work again". The played life is left exactly as it was played.
     for iid, evs in per.items():
-        for st in [e for e in evs if isinstance(e, Study) and not e.job_after and e.end_label in game.DEGREE_LABELS]:
-            end = st.start + st.months
-            if end >= _T(inp) or any(isinstance(e, (Job, SelfEmployment, Study, Retirement)) and e.start >= end
-                                     for e in events if e is not st):
-                continue
-            t = end
-            for e in sorted(events, key=lambda e: e.start):      # a gap year running then pushes the job back
-                if isinstance(e, Unemployment) and e.start <= t < e.start + e.months:
-                    t = e.start + e.months
-            if t >= _T(inp):
-                continue
-            sal, exp = game.GRAD_JOBS[game.DEGREE_LABELS[st.end_label]]
-            job = Job(t, sal, exp, "First job")
-            per[iid] = per[iid] + [job]
-            events.append(job)
+        jobs = _degree_jobs(evs, events, _T(inp))
+        per[iid] = per[iid] + jobs
+        events += jobs
     return events, per
+
+
+def _degree_jobs(evs: list, events: list, T: int) -> list:
+    """The degree job at graduation for every degree in ``evs`` whose path (``events``) does not decide yet what
+    comes after it (a gap year running at graduation pushes the job back)."""
+    out = []
+    for st in [e for e in evs if isinstance(e, Study) and not e.job_after and e.end_label in game.DEGREE_LABELS]:
+        end = st.start + st.months
+        if end >= T or any(isinstance(e, (Job, SelfEmployment, Study, Retirement)) and e.start >= end
+                           for e in list(events) + out if e is not st):
+            continue
+        t = end
+        for e in sorted(events, key=lambda e: e.start):
+            if isinstance(e, Unemployment) and e.start <= t < e.start + e.months:
+                t = e.start + e.months
+        if t >= T:
+            continue
+        sal, exp = game.GRAD_JOBS[game.DEGREE_LABELS[st.end_label]]
+        out.append(Job(t, sal, exp, "First job"))
+    return out
 
 
 def _build(inp: rv.Inputs, alt: dict) -> dict:
@@ -773,3 +785,340 @@ def suggestions(sess, alt=None, n: int = 6) -> list[dict]:
     if inp is None or n <= 0:
         return []
     return copy.deepcopy(_suggestions(inp, _alt_key(alt), int(n)))
+
+
+# ---------------------------------------------------------------- edits by key + age (the twin chat)
+def option_title(key: str, params: dict | None = None, values: bool = True) -> str:
+    """'🏡 Buy a home (CHF 800'000)' – the option's emoji and title with its adjustable value, if any."""
+    opt = game.OPTION_BY_KEY[key]
+    title = opt.title
+    if opt.params and values:
+        vals = opt.values(params)
+        if key == "buy_house":
+            title = f"{opt.title} ({rv.money(vals['price'])})"
+        elif key == "costs":
+            title = f"Monthly costs {'+' if vals['delta'] >= 0 else '−'}{rv.money(abs(vals['delta']))}"
+        elif key == "child":
+            title = f"{opt.title} ({rv.money(vals['cost'])}/month)"
+    return f"{opt.emoji} {title}"
+
+
+def check_age(key: str, age, start_age: int, end_age: int) -> str | None:
+    """None if option ``key`` can sit at ``age`` on a plan from ``start_age`` to ``end_age``, else why not."""
+    a = _age_val(age)
+    if a is None:
+        return "I need an age for that."
+    if a < start_age:
+        return f"{a} is already behind you – your plan starts at {start_age}."
+    if a >= end_age:
+        return (f"{a} is beyond your plan, which ends at {end_age}." +
+                (" Set a longer planning horizon in the sidebar." if end_age < game.END_AGE else ""))
+    lo, hi = age_bounds(key, start_age, end_age)
+    if a < lo:
+        return f"{option_title(key, values=False)} is only possible from age {lo}."
+    if a > hi:
+        return f"{option_title(key, values=False)} is only possible up to age {hi}."
+    return None
+
+
+def _match(items: list[dict], key: str, fuzzy: bool = True) -> dict | None:
+    """The plan item an edit by key means: same key (first one); with ``fuzzy`` a degree also matches another
+    degree ("remove my studies")."""
+    hit = next((it for it in items if it.get("key") == key), None)
+    if hit is None and fuzzy and key in DEGREES:
+        hit = next((it for it in items if it.get("key") in DEGREES), None)
+    return hit
+
+
+def _info(ok: bool, op: str, key: str | None, age=None, error: str | None = None, title: str | None = None,
+          from_age=None, params: dict | None = None) -> dict:
+    return {"ok": ok, "op": op, "key": key, "age": age, "from_age": from_age, "error": error,
+            "title": title or (option_title(key, params) if key in game.OPTION_BY_KEY else str(key)),
+            "params": dict(params or {})}
+
+
+def _clean_edit(edit) -> tuple[str, str | None, int | None, dict, int | None]:
+    edit = edit if isinstance(edit, dict) else {}
+    op = str(edit.get("op") or "add").lower()
+    key = edit.get("key")
+    key = str(key) if key in game.OPTION_BY_KEY and key != "stay" else None
+    params = edit.get("params") if isinstance(edit.get("params"), dict) else {}
+    if key:
+        params = {n: v for n, v in params.items() if n in game.OPTION_BY_KEY[key].params}
+    shift = _age_val(edit.get("shift"))
+    return op, key, _age_val(edit.get("age")), params, shift
+
+
+def _resolve_op(op: str, key: str, hit: dict | None, params: dict) -> str:
+    """What an edit really does: "move" without such an event = "add"; "add" of something you do only once (or a
+    retirement) that is already there = "move" – or "replace" when new values are given (another house price)."""
+    if op not in ("add", "move", "remove"):
+        op = "add"
+    if op == "move" and hit is None:
+        return "add"                                 # "move the house to 40" without a house: put one there
+    if op == "add" and hit is not None and (key == "retire" or game.OPTION_BY_KEY[key].once):
+        return "replace" if params else "move"
+    return op
+
+
+def alt_apply_chat_edit(sess, alt, edit) -> tuple[dict, dict]:
+    """Alt state after one chat edit ``{"op": add|move|remove, "key", "age", "params", "shift"?}`` on the played
+    life, plus info ``{ok, op, key, age, from_age, title, error}``. Invalid edits leave the state unchanged."""
+    alt = normalize(alt)
+    op, key, age, params, shift = _clean_edit(edit)
+    inp = _inputs(sess)
+    if inp is None:
+        return alt, _info(False, op, key, age, "Play the game first.")
+    if key is None:
+        return alt, _info(False, op, None, age, "I don't know that life event.", title="that event")
+    start, end = inp.person.age, inp.person.age + inp.years
+    items = [it for it in timeline_items(sess, alt) if it["kind"] in ("decision", "added") and not it["removed"]]
+    hit = _match(items, key, fuzzy=op != "add")
+    op = _resolve_op(op, key, hit, params)
+    if op == "remove" and hit is None:
+        return alt, _info(False, op, key, age, f"There is no {option_title(key, values=False)} in your life to take out.")
+    if op == "replace":                             # e.g. a home for another price: the old one goes, the new comes
+        if age is None:
+            age = int(round(float(hit["alt_age"] if hit.get("alt_age") is not None else hit["age"])))
+        err = check_age(key, age, start, end)
+        if err:
+            return alt, _info(False, "add", key, age, err, params=params)
+        new = apply_edit(apply_edit(alt, {"removed": [hit["id"]]}),
+                         {"added": [{"key": key, "age": age, "params": params}]})
+        return new, _info(True, "replace", key, age, params=params, from_age=int(hit["age"]))
+    if op == "remove":
+        return apply_edit(alt, {"removed": [hit["id"]]}), _info(True, op, hit["key"], None, title=f"{hit['emoji']} "
+                                                                f"{hit['title']}", from_age=int(hit["age"]))
+    if op == "move":
+        cur = float(hit["alt_age"] if hit.get("alt_age") is not None else hit["age"])
+        if age is None and shift is not None:
+            age = int(round(cur + shift))
+        err = check_age(hit["key"] or key, age, start, end)
+        if err:
+            return alt, _info(False, op, hit["key"], age, err)
+        if not hit.get("movable", True):
+            return alt, _info(False, op, hit["key"], age, f"{hit['title']} cannot be moved.")
+        return (apply_edit(alt, {"moves": {hit["id"]: age}}),
+                _info(True, op, hit["key"], age, title=f"{hit['emoji']} {hit['title']}", from_age=int(cur)))
+    if age is None:
+        age = max(start, age_bounds(key, start, end)[0])
+    err = check_age(key, age, start, end)
+    if err:
+        return alt, _info(False, "add", key, age, err, params=params)
+    return (apply_edit(alt, {"added": [{"key": key, "age": age, "params": params}]}),
+            _info(True, "add", key, age, params=params))
+
+
+# ---------------------------------------------------------------- the analysis page's own life plan (no game)
+PLAN_EMOJI = {"Study": "🎓", "Job": "💼", "JobChange": "🚀", "Unemployment": "📉", "SelfEmployment": "🧑‍💻",
+              "HouseBuy": "🏡", "OneOff": "🧾", "ExpenseChange": "🧾", "MarketCrash": "💥", "Retirement": "🪑",
+              "StrategyChange": "📈"}
+
+
+def event_key(ev) -> str | None:
+    """The game option an event of the page's plan stands for (None: not one of the options, e.g. a market crash)."""
+    label = str(getattr(ev, "label", "") or "").lower()
+    if isinstance(ev, Study):
+        return "master" if "master" in label else "lehre" if ("apprentice" in label or "lehre" in label) else "bachelor"
+    if isinstance(ev, Job):
+        return "grad_job" if label == "first job" else "job_start"
+    if isinstance(ev, JobChange):
+        return "parttime" if label == "part-time" else "gap_year" if label == "gap year" else "switch"
+    if isinstance(ev, Unemployment):
+        return "gap_year" if label == "gap year" else None
+    if isinstance(ev, Retirement):
+        return "retire"
+    if isinstance(ev, HouseBuy):
+        return "buy_house"
+    if isinstance(ev, ExpenseChange):
+        return "flat" if label == "luxury flat" else "child" if label == "child costs" else "costs"
+    if isinstance(ev, OneOff):
+        return "wedding" if label == "wedding" else "child" if label == "child" else None
+    return None
+
+
+def plan_groups(events) -> list[dict]:
+    """The page's plan events grouped as one option made them (in list order): a child = its birth + its costs at the
+    same month, a degree = the study + the degree job at graduation right after it in the list; everything else is
+    one event per group. ``[{"id": "p1", "idx": [i, ...], "key", "start"}]``."""
+    events = list(events)
+    out: list[dict] = []
+    for i, ev in enumerate(events):
+        prev = out[-1] if out else None
+        if prev is not None and prev["idx"][-1] == i - 1:
+            first = events[prev["idx"][0]]
+            child = (isinstance(first, OneOff) and first.label == "Child" and isinstance(ev, ExpenseChange)
+                     and ev.label == "Child costs" and ev.start == first.start and len(prev["idx"]) == 1)
+            degree = (isinstance(first, Study) and not first.job_after and isinstance(ev, Job)
+                      and ev.label == "First job" and ev.start >= first.start + first.months and len(prev["idx"]) == 1)
+            if child or degree:
+                prev["idx"].append(i)
+                continue
+        out.append({"id": f"p{len(out) + 1}", "idx": [i], "key": event_key(ev), "start": int(ev.start)})
+    return out
+
+
+OWN_LABEL = {"bachelor": "Bachelor", "master": "Master", "lehre": "Apprenticeship", "grad_job": "First job",
+             "job_start": "Job: entry level", "switch": "Job switch", "parttime": "Part-time", "retire": "Retired",
+             "flat": "Luxury flat", "wedding": "Wedding", "gap_year": "Gap year"}
+
+
+def _plan_title(ev, key: str | None) -> tuple[str, str]:
+    """(emoji, title) of a plan group led by ``ev``: the option's title when the event is the option's own,
+    else the event's label (templates, the "Add an event" form)."""
+    if isinstance(ev, HouseBuy):
+        return "🏡", f"Buy a home ({rv.money(ev.price)})"
+    if key == "costs" and isinstance(ev, ExpenseChange):
+        return "🧾", f"{ev.label} {'+' if ev.amount >= 0 else '−'}{rv.money(abs(ev.amount))}/month"
+    if key == "child":
+        return "👶", "Have a child"
+    if key in OWN_LABEL and ev.label == OWN_LABEL[key]:
+        opt = game.OPTION_BY_KEY[key]
+        return opt.emoji, opt.title
+    return PLAN_EMOJI.get(type(ev).__name__, "📌"), str(ev.label)
+
+
+def plan_items(person, events, years: int) -> list[dict]:
+    """Timeline items (lifereview format) for the page's own plan: one movable chip per group at its age, its
+    follow-up events (degree finished, the degree job, child moves out) as small markers that move with it."""
+    events = list(events)
+    start, T = int(person.age), 12 * int(years)
+    items: list[dict] = []
+    n_ev = 0
+    for g in plan_groups(events):
+        lead = events[g["idx"][0]]
+        emoji, title = _plan_title(lead, g["key"])
+        opt = game.OPTION_BY_KEY.get(g["key"]) if g["key"] else None
+        cat = rv.CAT_KEYS.get(opt.cat, opt.cat) if opt else ""
+        items.append({"id": g["id"], "kind": "decision", "key": g["key"], "emoji": emoji, "title": title,
+                      "cat": cat, "age": round(start + g["start"] / 12, 3),
+                      "alt_age": None, "removed": False, "movable": True, "impact": None, "follows": None,
+                      "alt_only": False, "beyond": g["start"] >= T})
+        marks = [(int(e.start), e.label) for e in (events[i] for i in g["idx"][1:])]
+        for e in (events[i] for i in g["idx"]):
+            marks += _end_labels(e)
+        for t, label in marks:
+            if t >= T:
+                continue
+            n_ev += 1
+            items.append(_event_item(f"e{n_ev}", label, t, start, g["id"], cat))
+    items.sort(key=lambda x: (x["age"], 0 if x["kind"] != "event" else 1))
+    return items
+
+
+def plan_addable(person, years: int) -> list[dict]:
+    """Options that can be added to the page's plan (same format as :func:`addable`)."""
+    start, end = int(person.age), int(person.age) + int(years)
+    out = []
+    for opt in game.OPTIONS:
+        lo, hi = age_bounds(opt.key, start, end)
+        if lo > hi:
+            continue
+        params = {n: p.spec(p.snap(p.default)) for n, p in opt.params.items()}
+        out.append({"key": opt.key, "emoji": opt.emoji, "title": opt.title, "text": opt.text_for(None, None),
+                    "cat": rv.CAT_KEYS.get(opt.cat, opt.cat), "params": params, "min_age": lo, "max_age": hi})
+    return out
+
+
+def option_events(person, key: str, month: int, params: dict | None = None, events=(), years: int | None = None,
+                  a=None, degree_job: bool = True) -> list:
+    """Events of game option ``key`` started at ``month`` on top of the plan ``events`` (snapshot and context – done
+    options, finished degrees, children – taken from that plan), with the chosen ``params``. A degree comes with the
+    job of that degree at graduation unless the plan already decides what follows (as in the alternative path)."""
+    from .config import Assumptions
+    opt = game.OPTION_BY_KEY[key]
+    events = list(events)
+    T = 12 * int(years) if years else max(12, int(month) + 1 + 12 * 10)
+    T = max(T, int(month) + 1)
+    plan = build_plan(person, events, T, calibrate(), a or Assumptions())
+    t = int(min(max(month, 0), T - 1))
+    snap = _snapshot_from_plan(plan, person, t)
+    done = {k for k in (event_key(e) for e in events) if k}
+    kids = sum(1 for e in events if isinstance(e, OneOff) and e.label == "Child")
+    ctx = game.Ctx(snap, frozenset(done), int(person.age) + t // 12, kids, game.finished_degrees(plan, t))
+    evs = list(opt.events(t, snap, ctx, params))
+    if degree_job:
+        evs += _degree_jobs(evs, events + evs, T)
+    return evs
+
+
+def _plan_month(person, age: float, years: int) -> int:
+    return int(min(max(round((float(age) - person.age) * 12), 0), 12 * int(years) - 1))
+
+
+def _shift_group(events: list, idx: list[int], month: int, years: int) -> list:
+    out = list(events)
+    grp = [out[i] for i in idx]
+    shifted = shift_events(grp, int(month) - min(e.start for e in grp), 12 * int(years) - 1)
+    for i, e in zip(idx, shifted):
+        out[i] = e
+    return out
+
+
+def plan_apply_action(person, events, action, years: int, a=None) -> list:
+    """The plan after one ``lifereview`` timeline action: ``move`` (id, age) shifts the whole group to that age,
+    ``remove`` (id) drops it, ``add`` (key, age, params) appends the option's events. Unknown actions: unchanged."""
+    events = list(events)
+    if not isinstance(action, dict):
+        return events
+    kind = action.get("action")
+    groups = {g["id"]: g for g in plan_groups(events)}
+    g = groups.get(str(action.get("id")))
+    if kind == "move" and g is not None and _num(action.get("age")) is not None:
+        return _shift_group(events, g["idx"], _plan_month(person, _num(action["age"]), years), years)
+    if kind == "remove" and g is not None:
+        return [e for i, e in enumerate(events) if i not in g["idx"]]
+    if kind == "add" and action.get("key") in game.OPTION_BY_KEY and action.get("key") != "stay":
+        age = _num(action.get("age"))
+        if age is None:
+            return events
+        key = str(action["key"])
+        params = action.get("params") if isinstance(action.get("params"), dict) else {}
+        return events + option_events(person, key, _plan_month(person, age, years), params, events, years, a)
+    return events
+
+
+def plan_apply_edit(person, events, edit, years: int, a=None) -> tuple[list, dict]:
+    """The plan after one chat edit ``{"op": add|move|remove, "key", "age", "params", "shift"?}`` plus info
+    ``{ok, op, key, age, from_age, title, error}`` (invalid edits leave the plan unchanged)."""
+    events = list(events)
+    op, key, age, params, shift = _clean_edit(edit)
+    if key is None:
+        return events, _info(False, op, None, age, "I don't know that life event.", title="that event")
+    start, end = int(person.age), int(person.age) + int(years)
+    groups = plan_groups(events)
+    items = [{"id": g["id"], "key": g["key"], "age": start + g["start"] / 12, "g": g} for g in groups]
+    hit = _match(items, key, fuzzy=op != "add")
+    op = _resolve_op(op, key, hit, params)
+    if op == "remove" and hit is None:
+        return events, _info(False, op, key, age, f"There is no {option_title(key, values=False)} in your plan to take out.")
+    if hit is not None:
+        emoji, title = _plan_title(events[hit["g"]["idx"][0]], hit["key"])
+        name = f"{emoji} {title}"
+    if op == "replace":
+        if age is None:
+            age = int(round(hit["age"]))
+        err = check_age(key, age, start, end)
+        if err:
+            return events, _info(False, "add", key, age, err, params=params)
+        rest = [e for i, e in enumerate(events) if i not in hit["g"]["idx"]]
+        new = option_events(person, key, _plan_month(person, age, years), params, rest, years, a)
+        return rest + new, _info(True, "replace", key, age, params=params, from_age=int(hit["age"]))
+    if op == "remove":
+        return ([e for i, e in enumerate(events) if i not in hit["g"]["idx"]],
+                _info(True, op, hit["key"], None, title=name, from_age=int(hit["age"])))
+    if op == "move":
+        if age is None and shift is not None:
+            age = int(round(hit["age"] + shift))
+        err = check_age(hit["key"] or key, age, start, end)
+        if err:
+            return events, _info(False, op, hit["key"], age, err, title=name)
+        return (_shift_group(events, hit["g"]["idx"], _plan_month(person, age, years), years),
+                _info(True, op, hit["key"], age, title=name, from_age=int(hit["age"])))
+    if age is None:
+        age = max(start, age_bounds(key, start, end)[0])
+    err = check_age(key, age, start, end)
+    if err:
+        return events, _info(False, "add", key, age, err, params=params)
+    new = option_events(person, key, _plan_month(person, age, years), params, events, years, a)
+    return events + new, _info(True, "add", key, age, params=params)

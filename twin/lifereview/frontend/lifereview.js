@@ -1,6 +1,8 @@
 // Life review: Streamlit component (static, no build step, no CDN) with three views, chosen by args.view:
 //   "timeline"    – the played life from the start age to 85 with ALL events; decisions can be dragged to another
-//                   age, removed or restored, new events added ("+ Add event"); posts move/remove/restore/add/reset
+//                   age, removed or restored, new events added ("+ Add event"); posts move/remove/restore/add/reset.
+//                   data.mode === 'plan': the analysis page's own life plan (no game) – same chips and actions, no
+//                   reset, wording without "played" / "new path"; data.empty = text when there are no events
 //   "suggestions" – the twin's suggestion cards (▲ green / ▼ red with the CHF effect at 85); posts apply
 //   "chart"       – expected net worth (after Juli's financial-twin chart.js and our dashboard.js port): p5–p95 band,
 //                   median of the played path (blue), the second path (orange), "your life" (pink), event markers,
@@ -124,7 +126,8 @@
         params: paramList(o.params),
       })).filter(o => o.min <= o.max);
       return { a0, aN, all, byId, decisions: all.filter(t => t.kind !== 'event'), events: all.filter(t => t.kind === 'event'),
-               addable, hasAlt: !!D.has_alt, title: D.title ? String(D.title) : 'YOUR TIMELINE', hint: D.hint ? String(D.hint) : '' };
+               addable, hasAlt: !!D.has_alt, title: D.title ? String(D.title) : 'YOUR TIMELINE', hint: D.hint ? String(D.hint) : '',
+               plan: D.mode === 'plan', empty: D.empty ? String(D.empty) : '' };
     }
     function paramList(p) {
       const list = Array.isArray(p) ? p : (p && typeof p === 'object' ? Object.entries(p).map(([name, s]) => Object.assign({ name }, s || {})) : []);
@@ -149,12 +152,13 @@
       R.title.textContent = M.title;
       if (M.hint) R.hint.textContent = M.hint;
       R.reset.disabled = !M.hasAlt || S.busy;
+      R.reset.hidden = M.plan;
       R.add.hidden = !M.addable.length;
       R.ticks.innerHTML = ticks5(M.a0, M.aN).map(a =>
         `<span class="${a === M.aN ? 'end' : ''}" style="left:${((a - M.a0) / (M.aN - M.a0) * 100).toFixed(3)}%">${a === M.a0 ? 'Start · ' + a : a}</span>`).join('');
       R.items.innerHTML = M.decisions.map(chipHtml).join('');
       R.events.innerHTML = M.events.map(evHtml).join('');
-      if (!M.decisions.length && !M.events.length) R.info.textContent = 'No events yet – play a life first.';
+      if (!M.decisions.length && !M.events.length) R.info.textContent = M.empty || 'No events yet – play a life first.';
       renderLegend(M);
       renderAddPanel();
       layout();
@@ -163,7 +167,7 @@
         if (b) { try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); } }
         T.focusId = null;
       }
-      if (!S.busy) R.info.innerHTML = summaryInfo(M);
+      if (!S.busy && (M.decisions.length || M.events.length)) R.info.innerHTML = summaryInfo(M);
     }
     const cssId = id => String(id).replace(/["\\]/g, '\\$&');
     function chipHtml(t) {
@@ -173,7 +177,7 @@
       const label = describe(t);
       const x = t.removed
         ? `<button type="button" class="tl-x restore" data-x="restore" data-id="${esc(t.id)}" aria-label="${esc('Bring back ' + t.title)}" title="Bring back">↺</button>`
-        : removable(t) ? `<button type="button" class="tl-x" data-x="remove" data-id="${esc(t.id)}" aria-label="${esc('Remove ' + t.title + ' from the new path')}" title="Remove from the new path">✕</button>` : '';
+        : removable(t) ? `<button type="button" class="tl-x" data-x="remove" data-id="${esc(t.id)}" aria-label="${esc('Remove ' + t.title + (T.M && T.M.plan ? ' from your plan' : ' from the new path'))}" title="${T.M && T.M.plan ? 'Remove from your plan' : 'Remove from the new path'}">✕</button>` : '';
       return `<div class="tl-item" role="listitem" data-id="${esc(t.id)}"><button type="button" class="${cls}" data-id="${esc(t.id)}" ` +
         `data-movable="${t.movable && !t.removed ? 1 : 0}" aria-label="${esc(label)}" title="${esc(label)}">` +
         (t.kind === 'added' ? '<span class="plus" aria-hidden="true">+</span>' : '') +
@@ -286,14 +290,15 @@
       for (const e of followers(t.id)) { e.style.left = (num(+e.dataset.left) + dx) + 'px'; e.classList.add('linked'); }
       R.guide.hidden = false; R.guide.style.left = g.X(age) + 'px'; R.guide.style.height = (g.axisY + 14) + 'px';
       R.guide.textContent = `${age} y`;
-      if (!t.moved && t.kind !== 'added' && !R.ghosts.querySelector('.tl-ghost.tmp')) {
+      if (!t.moved && t.kind !== 'added' && !(T.M && T.M.plan) && !R.ghosts.querySelector('.tl-ghost.tmp')) {
         R.ghosts.insertAdjacentHTML('beforeend', `<span class="tl-ghost tmp" style="left:${g.X(t.age)}px;top:${g.axisY + 6}px"><span>was ${ageInt(t.age)}</span></span>`);
       }
-      R.info.innerHTML = `${esc(t.emoji)} <b>${esc(t.title)}</b> → age ${age}` + (t.kind !== 'added' ? ` <span>(played at ${ageInt(t.age)})</span>` : '');
+      R.info.innerHTML = `${esc(t.emoji)} <b>${esc(t.title)}</b> → age ${age}` + (t.kind !== 'added' ? ` <span>(${T.M && T.M.plan ? 'was' : 'played at'} ${ageInt(t.age)})</span>` : '');
     }
     function cancelPreview() {
       R.guide.hidden = true;
       R.events.querySelectorAll('.linked').forEach(e => e.classList.remove('linked'));
+      R.ghosts.querySelectorAll('.tl-ghost.tmp').forEach(e => e.remove());
       layout();
       if (T.M) R.info.innerHTML = summaryInfo(T.M);
     }
@@ -384,7 +389,7 @@
     function clearInfo() {
       if (S.busy || T.drag || T.key || !T.M) return;
       R.events.querySelectorAll('.linked').forEach(e => e.classList.remove('linked'));
-      R.info.innerHTML = summaryInfo(T.M);
+      if (T.M.decisions.length || T.M.events.length) R.info.innerHTML = summaryInfo(T.M);
     }
     const itemOf = ev => { const b = ev.target.closest && ev.target.closest('.tl-chip, .tl-ev'); return b && T.M ? T.M.byId.get(b.dataset.id) : null; };
     for (const host of [R.items, R.events]) {
@@ -579,17 +584,25 @@
       return a[i] + (a[j] - a[i]) * f;
     };
 
+    /** Series names: data.names {played, alt, life, played_events, alt_events} (the page's own plan uses other
+     *  words than the played game). */
+    function names() {
+      const n = C.D && C.D.names && typeof C.D.names === 'object' ? C.D.names : {};
+      const s = (k, d) => (n[k] ? String(n[k]) : d);
+      return { played: s('played', 'Your path'), alt: s('alt', 'New path'), life: s('life', 'your life'),
+               playedEv: s('played_events', 'Your events'), altEv: s('alt_events', 'Changed in the new path') };
+    }
     function renderLegend(v) {
-      const it = [];
+      const it = [], N = names();
       if (C.band) it.push(`<span><i class="bd" style="--c:${COL.band}"></i>Range p5–p95</span>`);
-      it.push(`<span><i style="--c:${COL.median}"></i>Your path (median)</span>`);
-      if (v.life) it.push(`<span><i style="--c:${COL.life}"></i>your life</span>`);
+      it.push(`<span><i style="--c:${COL.median}"></i>${esc(N.played)} (median)</span>`);
+      if (v.life) it.push(`<span><i style="--c:${COL.life}"></i>${esc(N.life)}</span>`);
       if (v.hasAlt) {
-        it.push(`<span><i class="dash" style="--c:${COL.alt}"></i>${esc(v.label ? `New path: ${v.label}` : 'New path')} (median)</span>`);
-        if (C.band && v.q5 && v.q95) it.push(`<span><i class="bd" style="--c:${COL.altBand}"></i>Range of the new path</span>`);
+        it.push(`<span><i class="dash" style="--c:${COL.alt}"></i>${esc(v.label ? `${N.alt}: ${v.label}` : N.alt)} (median)</span>`);
+        if (C.band && v.q5 && v.q95) it.push(`<span><i class="bd" style="--c:${COL.altBand}"></i>Range: ${esc(N.alt.toLowerCase())}</span>`);
       }
-      if (v.markers.some(m => m.path === 'played')) it.push(`<span><i class="ev" style="--c:${COL.played}"></i>Your events</span>`);
-      if (v.markers.some(m => m.path === 'alt')) it.push(`<span><i class="ev" style="--c:${COL.alt}"></i>Changed in the new path</span>`);
+      if (v.markers.some(m => m.path === 'played')) it.push(`<span><i class="ev" style="--c:${COL.played}"></i>${esc(N.playedEv)}</span>`);
+      if (v.markers.some(m => m.path === 'alt')) it.push(`<span><i class="ev" style="--c:${COL.alt}"></i>${esc(N.altEv)}</span>`);
       R.legend.innerHTML = it.join('');
     }
     function renderSummary(v) {
@@ -599,10 +612,10 @@
         const ae = isNum(m.alt_end) ? m.alt_end : at(v.q50, last);
         const d = isNum(m.delta_end) ? m.delta_end : (ae !== null && pe !== null ? ae - pe : null);
         if (d === null) { R.sum.innerHTML = ''; return; }
-        const cls = d > 0.5 ? 'pos' : d < -0.5 ? 'neg' : '';
-        R.sum.innerHTML = `<b class="${cls}">New path: ${esc(chfSigned(d))}</b> at ${end} vs. your path` +
+        const cls = d > 0.5 ? 'pos' : d < -0.5 ? 'neg' : '', N = names();
+        R.sum.innerHTML = `<b class="${cls}">${esc(N.alt)}: ${esc(chfSigned(d))}</b> at ${end} vs. ${esc(N.played.toLowerCase())}` +
           (v.label ? ` <span>(“${esc(v.label)}”)</span>` : '') + '. ' +
-          (pe !== null && ae !== null ? `Median at ${end}: your path ${esc(chf(pe))} · new path ${esc(chf(ae))}.` : '');
+          (pe !== null && ae !== null ? `Median at ${end}: ${esc(N.played.toLowerCase())} ${esc(chf(pe))} · ${esc(N.alt.toLowerCase())} ${esc(chf(ae))}.` : '');
       } else if (pe !== null) {
         const lo = at(v.p5, last), hi = at(v.p95, last);
         R.sum.innerHTML = `At ${end}, your expected (median) net worth is <b>${esc(chf(pe))}</b>` +
@@ -731,12 +744,12 @@
         el.append(text); if (cls) el.className = cls; kids.push(el);
       };
       add('strong', `At age ${Math.round(v.ages[h])}`);
-      const med = at(v.p50, h), alt = at(v.q50, h);
-      if (med !== null) add('span', `Your path (median) · ${chf(med)}`, COL.median);
+      const med = at(v.p50, h), alt = at(v.q50, h), N = names();
+      if (med !== null) add('span', `${N.played} (median) · ${chf(med)}`, COL.median);
       if (band && at(v.p5, h) !== null && at(v.p95, h) !== null) add('span', `Range p5–p95 · ${kfmt(v.p5[h])} – ${kfmt(v.p95[h])}`, 'rgba(47,123,255,.5)', 'd');
-      if (at(v.life, h) !== null) add('span', `your life · ${chf(v.life[h])}`, COL.life);
+      if (at(v.life, h) !== null) add('span', `${N.life} · ${chf(v.life[h])}`, COL.life);
       if (alt !== null) {
-        add('span', `New path (median) · ${chf(alt)}`, COL.alt);
+        add('span', `${N.alt} (median) · ${chf(alt)}`, COL.alt);
         if (med !== null) add('span', `Difference · ${chfSigned(alt - med)}`, null, 'd');
       }
       const yr = Math.round(v.ages[h]);

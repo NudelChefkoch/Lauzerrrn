@@ -13,6 +13,8 @@ local woff2 copies) with three views, picked by ``view``:
                    has_alt: bool, title?, hint?}``
                    actions: ``{"action": "move", "id", "age"}``, ``{"action": "remove", "id"}``,
                    ``{"action": "restore", "id"}``, ``{"action": "add", "key", "age", "params"}``, ``{"action": "reset"}``
+                   ``mode: "plan"`` = the analysis page's own life plan without a game (``alt_path.plan_items``):
+                   same chips and actions, no reset button, no "played" wording; ``empty`` = text without events.
 ``"suggestions"``  cards ``{id, emoji, title, text, impact, delta, applied?}`` with "Try it".
                    data: ``{items: alt_path.suggestions(...), loading?: bool, end_age?: 85, vs?: "your path",
                    title?, intro?}``  ·  action: ``{"action": "apply", "id"}``
@@ -20,7 +22,9 @@ local woff2 copies) with three views, picked by ``view``:
                    path's median (orange, dashed) + band, event markers, hover / arrow-key readout, legend and the
                    summary line "New path: +CHF X at 85 vs. your path".
                    data: ``alt_path.simulate_paths(...)`` plus ``markers`` (see :func:`chart_markers`) or ``items``,
-                   optional ``height`` (canvas px), ``title``, ``subtitle``, ``summary``  ·  no actions.
+                   optional ``height`` (canvas px), ``title``, ``subtitle``, ``summary``, ``names`` (series names
+                   ``{played, alt, life, played_events, alt_events}``, default "Your path" / "New path" / …)  ·
+                   no actions.
 
 Every value the frontend posts carries a ``nonce``; :func:`lifereview` returns each action exactly once (a Streamlit
 component keeps returning its last value on every rerun) and validates its shape, so the page can apply it directly.

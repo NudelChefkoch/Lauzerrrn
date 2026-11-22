@@ -45,7 +45,8 @@ def _pct(x: float) -> str:
 
 
 def backtest_card_html(result: dict, with_style: bool = False) -> str:
-    """The card for a ``backtest()`` result: headline coverage, one mini bar per employment status, method note."""
+    """The card for a ``backtest()`` result: headline coverage and one mini bar per employment status (the method
+    text stays in ``result["method"]``, it is not shown on the card)."""
     n = int(result.get("n_profiles", 0))
     cov = float(result.get("coverage_90", 0.0))
     rows = []
@@ -61,12 +62,10 @@ def backtest_card_html(result: dict, with_style: bool = False) -> str:
     sub = (f'Typical miss of the median forecast: CHF {result.get("median_abs_error_chf", 0):,.0f} '
            f'({result.get("median_abs_error_pct", 0) * 100:.1f} % of the balance) · inner 50 % band: '
            f'{_pct(float(result.get("coverage_50", 0.0)))} · dashed line = 90 % target')
-    note = str(result.get("method", ""))
-    if not result.get("param_uncertainty", True):
-        note += " Without parameter uncertainty."
+    note = "" if result.get("param_uncertainty", True) else "Without parameter uncertainty."
     body = (f'<div class="bt-body"><p class="bt-head">The 90 % band caught <b>{_pct(cov)}</b> of {n:,} real outcomes'
             f'</p><p class="bt-sub">{_e(sub)}</p><ul class="bt-bars">{"".join(rows)}</ul>'
-            f'<p class="bt-note">{_e(note)}</p></div>')
+            + (f'<p class="bt-note">{_e(note)}</p>' if note else "") + '</div>')
     style = (style_block() if with_style else "") + "<style>" + " ".join(CSS.split()) + "</style>"
     return (f'{style}<div class="lr"><section class="lr-card"><div class="lr-band good"><span class="ol">'
             f'TWIN VS. REALITY</span></div>{body}</section></div>')

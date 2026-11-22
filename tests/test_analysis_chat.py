@@ -27,7 +27,8 @@ def ctx(calib, monkeypatch):
 
 @pytest.mark.parametrize("question, tool", [
     ("What if I buy a house at 30?", "house"),
-    ("Hauskauf mit 40 zu CHF 900k", "house"),
+    ("Hauskauf mit 40 zu CHF 900k", "edit_plan"),   # a statement with an event + age: put it on the plan
+    ("Hauskauf mit 40 zu CHF 900k?", "house"),     # the same as a question stays a what-if
     ("Is pillar 3a worth it?", "pillar3a"),
     ("Lohnt sich die Säule 3a?", "pillar3a"),
     ("Which investment style suits me?", "strategy"),
@@ -262,3 +263,135 @@ def test_fake_llm_can_pick_suggest(ctx, played_review, monkeypatch):
     monkeypatch.setattr(ac, "request_chat", lambda messages, fmt=None, **kw: {"tool": "suggest", "age": 0, "price": 0})
     out = ac.answer(ctx, "How could my life have gone differently?")
     assert out["mode"] == "llm" and out["tool"] == "suggest" and "Buy a home at 35" in out["text"]
+
+
+# ---------------------------------------------------------------- edit_plan: the user says what should happen
+@pytest.mark.parametrize("text, edits", [
+    ("I buy a house at 35 for 800k", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("I buy a house at 35 for 800'000", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("I buy a house at 35 for 1.2M", [("add", "buy_house", 35, {"price": 1_200_000})]),
+    ("add a child at 30", [("add", "child", 30, {})]),
+    ("Add a child at 31 costing 1500 a month", [("add", "child", 31, {"cost": 1500})]),
+    ("I want to do a master at 26", [("add", "master", 26, {})]),
+    ("I switch jobs at 40", [("add", "switch", 40, {})]),
+    ("retire at 62", [("add", "retire", 62, {})]),
+    ("move the house to 40", [("move", "buy_house", 40, {})]),
+    ("remove the gap year", [("remove", "gap_year", None, {})]),
+    ("I spend 300 less a month from 30", [("add", "costs", 30, {"delta": -300})]),
+    ("Have a baby in 3 years", [("add", "child", 27, {})]),
+    ("Add a child at 30 and buy a house at 35 for 800k",
+     [("add", "child", 30, {}), ("add", "buy_house", 35, {"price": 800_000})]),
+    # German
+    ("Ich kaufe mit 35 ein Haus für 800'000", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("Füge mit 30 ein Kind hinzu", [("add", "child", 30, {})]),
+    ("Verschiebe das Haus auf 40", [("move", "buy_house", 40, {})]),
+    ("Streiche das Zwischenjahr", [("remove", "gap_year", None, {})]),
+    ("Ich gehe mit 62 in Rente", [("add", "retire", 62, {})]),
+    ("Ich mache mit 26 einen Master", [("add", "master", 26, {})]),
+    ("Ich wechsle mit 40 den Job", [("add", "switch", 40, {})]),
+    ("Hochzeit mit 29, bitte hinzufügen", [("add", "wedding", 29, {})]),
+    # statements without a verb: an event + an age is what should happen
+    ("Haus mit 35 für 800k", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("buy a house at 35 for 800,000", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("buy a house for CHF 800 000 at 35", [("add", "buy_house", 35, {"price": 800_000})]),
+    ("child at 30 costing 1500", [("add", "child", 30, {"cost": 1500})]),
+    ("Kind mit 30, 1500 pro Monat", [("add", "child", 30, {"cost": 1500})]),
+    ("Teilzeit ab 45", [("add", "parttime", 45, {})]),
+    # an amount outside the plausible range is not used (no 800 -> CHF 800 home, the default price applies)
+    ("I buy a house at 35 for 800", [("add", "buy_house", 35, {})]),
+])
+def test_plan_parser(text, edits):
+    got = ac.parse_plan(text, 24)
+    assert [(e["op"], e["key"], e["age"], e["params"]) for e in got] == edits
+
+
+def test_plan_parser_relative_and_not_a_plan():
+    assert ac.parse_plan("move the house 5 years later", 24) == [{"op": "move", "key": "buy_house", "age": None,
+                                                                  "params": {}, "shift": 5}]
+    for q in ["What if I buy a house at 30?", "Hauskauf mit 40 zu CHF 900k?", "House at 30 for 900k?",
+              "I lose my job", "How is my current plan?", "Is pillar 3a worth it?", "Suggest another path",
+              "I like my job", "My house is too expensive"]:
+        assert ac.parse_plan(q, 24) is None, q
+    assert ac.parse_plan("add a dog at 30", 24) == []              # an edit verb, but no known life event
+
+
+def test_edit_plan_tool_numbers_from_our_model(ctx):
+    """The reply's numbers are the plan's simulation with the same seed; the edit comes back as plan_edit."""
+    from twin import alt_path
+    from twin.scenarios import preset
+    p = ctx.person
+    ctx.events = tuple(preset("hauskauf", p))
+    out = ac.answer(ctx, "Add a child at 28")
+    assert out["tool"] == "edit_plan" and out["mode"] == "offline"
+    assert out["plan_edit"] == [{"op": "add", "key": "child", "age": 28, "params": {}}]
+    new, info = alt_path.plan_apply_edit(p, list(ctx.events), out["plan_edit"][0], ctx.years, ctx.a)
+    before = ctx.run(ctx.events).metrics["median_net_worth_end"]
+    after = ctx.run(new).metrics["median_net_worth_end"]
+    assert out["numbers"]["before"] == before and out["numbers"]["after"] == after
+    assert f"I added 👶 Have a child (CHF 1'100/month) at 28 – your plan ends at {ac.chf(after)} at 34 " \
+           f"({ac.chf_delta(after - before)} vs. before" in out["text"]
+    assert "Drag it on your timeline" in out["text"] and out["text"].endswith(ac.DISCLAIMER)
+    # invalid: outside the plan / unknown event / nothing to remove -> said, no edit
+    out = ac.answer(ctx, "retire at 62")
+    assert out["plan_edit"] is None and "beyond your plan, which ends at 34" in out["text"]
+    out = ac.answer(ctx, "add a dog at 30")
+    assert out["plan_edit"] is None and "I know these life events" in out["text"]
+    out = ac.answer(ctx, "remove the gap year")
+    assert out["plan_edit"] is None and "There is no 🎒 Gap year in your plan" in out["text"]
+    out = ac.answer(ctx, "move the house to 30")
+    assert out["plan_edit"] == [{"op": "move", "key": "buy_house", "age": 30, "params": {}}]
+    assert "I moved 🏡 Buy a home (CHF 750'000) from 32 to 30" in out["text"]
+
+
+def test_edit_plan_after_a_game_goes_into_the_alt_path(ctx):
+    from twin import alt_path
+    from twin.session import GameSession
+    s = GameSession()
+    s.start({"age": 27, "status": "employed", "income": 6000, "expenses": 4700, "rent": 1600, "cash": 12000,
+             "portfolio": 8000, "debt": 0}, {"name": "Testi"}, seed=1)
+    for k in ("switch", "wedding", "child"):
+        assert s.choose(k)
+    while s.phase == "play":
+        s.skip(10)
+    ctx.game, ctx.alt = s, alt_path.empty()
+    out = ac.answer(ctx, "I buy a house at 40 for 800k")
+    assert out["plan_edit"] == [{"op": "add", "key": "buy_house", "age": 40, "params": {"price": 800_000.0}}]
+    alt, _ = alt_path.alt_apply_chat_edit(s, ctx.alt, out["plan_edit"][0])
+    m = alt_path.simulate_paths(s, alt)["metrics"]
+    assert out["numbers"]["after"] == m["alt_end"] and out["numbers"]["before"] == m["played_end"]
+    assert "your new path ends at" in out["text"] and "at 85" in out["text"]
+    assert ac.parse_plan("Add a child at 30", 27) and "Add a child at 30" in ac.suggestions(ctx)
+
+
+def test_fake_llm_parses_a_plan_edit(ctx, monkeypatch):
+    """The model routes and parses (JSON schema with op / key / age / price / amount); our model computes."""
+    calls = []
+
+    def fake_chat(messages, fmt=None, **kw):
+        calls.append(fmt)
+        assert fmt["properties"]["key"]["enum"][:-1] == list(ac.PLAN_KEYS)
+        assert fmt["properties"]["op"]["enum"] == ["add", "move", "remove", "none"]
+        return {"tool": "edit_plan", "op": "add", "key": "wedding", "age": 29, "price": 0, "amount": 0}
+
+    monkeypatch.setattr(ac, "status", lambda force=False: {"available": True, "model": "fake"})
+    monkeypatch.setattr(ac, "request_chat", fake_chat)
+    out = ac.answer(ctx, "Tie the knot when I'm twenty-nine")          # no keyword: only the model understands it
+    assert calls and out["mode"] == "llm" and out["tool"] == "edit_plan"
+    assert out["plan_edit"] == [{"op": "add", "key": "wedding", "age": 29, "params": {}}]
+    assert "I added 💍 Get married at 29" in out["text"]
+    # numbers written in the message beat the model's
+    monkeypatch.setattr(ac, "request_chat", lambda *a, **k: {"tool": "edit_plan", "op": "add", "key": "buy_house",
+                                                             "age": 33, "price": 600000, "amount": 0})
+    out = ac.answer(ctx, "I buy a house at 30 for 800k")
+    assert out["plan_edit"][0]["age"] == 30 and out["plan_edit"][0]["params"] == {"price": 800_000.0}
+    # an unknown event from the model -> the twin says so; a what-if question goes back to the offline router
+    monkeypatch.setattr(ac, "request_chat", lambda *a, **k: {"tool": "edit_plan", "op": "add", "key": "none",
+                                                             "age": 30, "price": 0, "amount": 0})
+    assert "I know these life events" in ac.answer(ctx, "I adopt a dragon at 30")["text"]
+    assert ac.answer(ctx, "What if I buy a house at 30?")["tool"] == "house"
+    # the model routes a clear edit to the what-if calculator: the edit is not lost
+    monkeypatch.setattr(ac, "request_chat", lambda *a, **k: {"tool": "house", "op": "none", "key": "none",
+                                                             "age": 30, "price": 800000, "amount": 0})
+    out = ac.answer(ctx, "I buy a house at 30 for 800k")
+    assert out["mode"] == "llm" and out["tool"] == "edit_plan"
+    assert out["plan_edit"] == [{"op": "add", "key": "buy_house", "age": 30, "params": {"price": 800_000.0}}]
