@@ -80,10 +80,17 @@ def _read(name: str) -> pd.DataFrame:
     return pd.read_csv(data_dir() / name)
 
 
-@lru_cache(maxsize=1)
-def calibrate() -> Calibration:
+@lru_cache(maxsize=4)
+def calibrate(months: int | None = None) -> Calibration:
+    """Calibrate on all months of the data (default) or only on each profile's first ``months`` months
+    (out-of-sample backtest, see ``twin.backtest``). Balances (cash, portfolio, debt) are always the opening ones."""
     prof = _read("synthetic-profiles.csv").set_index("profile_id")
     cb = _read("synthetic-cash-balances.csv")
+    if months is not None:
+        if months < 12:
+            raise ValueError("need at least 12 months to calibrate the seasonal pattern")
+        cb = cb.sort_values(["profile_id", "month"], kind="stable")
+        cb = cb[cb.groupby("profile_id").cumcount() < months].reset_index(drop=True)
     assets = _read("synthetic-assets.csv")
     liab = _read("synthetic-liabilities.csv")
     goals = _read("synthetic-goals.csv")
