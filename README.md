@@ -5,6 +5,14 @@ Repo für Falsch und gefälschtes Geld in Lauzern
 
 Regime-switching cash-flow SDE + Merton jump-diffusion portfolio + Monte Carlo, calibrated per person from the challenge data.
 
+Quick start (creates `venv/`, installs missing packages, frees the port, opens the browser):
+
+```bash
+./start.sh          # or ./start.sh 8600 for another port
+```
+
+With uv:
+
 ```bash
 uv sync
 uv run twin P00001 master --years 10 --market standard --strategy ausgewogen --job-loss 0.025
