@@ -75,6 +75,11 @@ class SimConfig:
     reemployment_income: float = 7738.0  # Daten: Median Lohn Angestellte
     # Sparen
     invest_share: float = 0.0           # Anteil des Cash über Puffer, der monatlich ins Depot geht
+    adaptive_cut: float = 0.0           # Ausgabenkürzung, solange Cash < 0 (Verhaltensannahme):
+                                        # mind. dieser Anteil, bei Bedarf bis Einkommen - Schuldzins
+    min_living_chf: float = 2500.0      # Existenzminimum (CHF/Mt., indexiert) als Untergrenze der Kürzung
+    retirement_expense_ratio: float = 1.0  # Ausgaben ab Pensionierung (× bisher)
+    lifestyle_share: float = 0.0        # Anteil von Einkommenserhöhungen (Szenarien), der konsumiert wird
     buffer_months: float = 3.0          # Puffer = x Monatsausgaben
     # Dezember / Saison
     december_regime: bool = True
@@ -263,12 +268,20 @@ def simulate_profile(row: pd.Series, model: Model, cfg: SimConfig,
                 if retire.any():
                     base = np.where(state == WORK, income, last_work)
                     income[retire] = cfg.replacement_rate * base[retire]
+                    expenses[retire] *= cfg.retirement_expense_ratio
                     state[retire] = RET
 
         gs = group_of_state()
         inc_eff = (np.full(n, ext.inc_set[t]) if not np.isnan(ext.inc_set[t]) else income * ext.inc_factor[t]) \
             + ext.inc_add[t]
         exp_eff = expenses * ext.exp_factor[t] + ext.exp_add[t] * infl_idx
+        if cfg.lifestyle_share > 0:
+            exp_eff = exp_eff + cfg.lifestyle_share * np.maximum(inc_eff - income, 0.0)
+        if cfg.adaptive_cut > 0:
+            interest_due = -np.minimum(C[:, t], 0.0) * r_od / 12
+            target = np.minimum(exp_eff * (1 - cfg.adaptive_cut), inc_eff - interest_due)
+            floor = np.minimum(exp_eff, cfg.min_living_chf * infl_idx)
+            exp_eff = np.where(C[:, t] < 0, np.maximum(target, floor), exp_eff)
 
         # --- Depot (GBM exakt) und Immobilie ---
         z1 = r_dep.standard_normal(n)

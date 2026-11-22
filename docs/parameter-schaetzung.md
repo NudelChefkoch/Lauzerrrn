@@ -212,6 +212,51 @@ Net Worth mit Immobilie: NW = C + I + H − L.
 
 S029 und S105 (FX als mehr Streuung), S051 (Notgroschen als Trade-off Reserve vs. Anlage), S055 (gesperrtes Konto als Depot), S068 (Rebalancing als geringere Volatilität), S079 (Kreditlimit als Strafzins), S093 (3a als Depot, Steuerersparnis als Einkommen), S097 (dynamische Entnahme als Ausgabenkürzung), S098 (verlängert nur den Horizont), S119 (Kredit fliesst ins Geschäft ohne privaten Gegenwert). Szenarien zur Rente (S095–S097, S100) wirken ab dem Rentenbeginn, bei Pensionierten also sofort. Kapitalbezug S099 nur vor der Pensionierung.
 
+## Lebensweg (Spiel)
+
+Dateien: [`sde/lebensweg.py`](../sde/lebensweg.py) (Spiellogik, Finanzkern, Lebensbilanz), [`sde/lebensweg_gui.py`](../sde/lebensweg_gui.py) (Brett)
+
+```bash
+venv/bin/python sde/lebensweg_gui.py                 # Spiel mit Setup-Dialog
+venv/bin/python sde/lebensweg_gui.py --demo          # alle auf Autopilot
+venv/bin/python sde/lebensweg.py --players 3         # ohne GUI, schreibt output/lebensweg_bilanz.png
+```
+
+Ein eigenes Brettspiel im Genre der Lebens-Spiele: 1–4 Spieler fahren als Avatare in Autos eine Strasse von Alter 20 bis 67, ein Feld pro Jahr.
+
+- **Startprofil:** einer der 39 Studierenden aus den Daten (Cash, Depot, Miete, Streuung). Das Alter wird für alle auf 20 gesetzt.
+- **Würfeln:** 1–3 Jahre. An Entscheidungsfeldern (!) muss angehalten werden.
+- **11 Entscheidungen**, an denen sich die Strasse in Spuren teilt:
+  - Ausbildung, Karrierestart, Wohnen, Geld anlegen, Mobilität, Familie
+  - Wohneigentum, Lebensmitte, Auszeit, Vorsorge, Pensionierung
+
+  Jede Option ist ein Szenario aus der Bibliothek (S001, S042, S033 …) oder ein Plan aus den Bausteinen.
+- **Vorschau:** Vor jeder Wahl wird jede Option simuliert und als Median-NW mit 67 samt Δ angezeigt.
+- **Tragbarkeit:** Hauskauf braucht 20 % Eigenkapital + 3 % Gebühren in Cash + Depot, Auto und Sportwagen den Kaufpreis, Startup und Sabbatical eine Reserve. Sonst ist die Option gesperrt, mit Begründung.
+- **Schicksalskarten (?)**, gewichtet gezogen, mit Bedingungen (z. B. Hausreparatur nur mit Eigentum, Jobverlust nur vor der Pension):
+  - Jobverlust, Beförderung, Börsencrash, Börsenboom, Erbschaft, Notfall, Krankheit, Bonus
+  - Hausreparatur, Autounfall, Mieterhöhung, Energiepreise, Zahnspange, Nebenjob
+- **Wertung:** Net Worth (Median mit 67) und Lebensqualität (Punkte je Option und Karte). Punkte = NW/100k + LQ, damit Geld gegen Leben abgewogen wird.
+- **Lebensbilanz als Graph** am Spielende, gespeichert als `output/lebensweg_bilanz.png`:
+  - Net Worth aller Spieler von 20 bis 85 mit Markierungen für Entscheidungen und Ereignisse
+  - Entscheidungsgraph mit allen Optionen und den gefahrenen Routen
+  - Rangliste
+
+### Spielannahmen (abweichend vom Datenmodell)
+
+| Annahme | Spiel | Datenmodell | Grund |
+|---|---|---|---|
+| Einstiegslohn | 6'000 CHF/Mt. | 8'163 (Daten) | Daten-Wert ist für einen Einstieg sehr hoch |
+| Sparquote bei Einstieg | 15 % | 54,7 % (Daten) | sonst Millionen für alle |
+| Lebensstil wächst mit (`lifestyle_share`) | 60 % jeder Einkommenserhöhung wird konsumiert | 0 | Beförderungen würden sonst voll gespart |
+| Schuldenbremse (`adaptive_cut`, `min_living_chf`) | bei Cash < 0 Ausgaben −30 %, bei Bedarf bis Einkommen − Schuldzins, nie unter 2'500 CHF/Mt. | aus | sonst Überziehungsspirale zu 8 % über Jahrzehnte |
+| Ausgaben in Rente | 80 % | 100 % | übliche Planungsannahme |
+| Jobverlust | nur über Karten | 2 % p.a. | keine Doppelzählung |
+
+Die Spielannahmen sind in der Setup-Maske bzw. in `GAME_DEFAULTS` einstellbar. Im normalen Datenmodell sind die neuen Verhaltensregeln abgeschaltet; der Backtest ist unverändert (88 % im 90-%-Band).
+
+Auffällig: Wohneigentum lohnt sich im Modell stark (z. B. +810k mit 67 für eine 600k-Wohnung mit 35). Das folgt aus den Annahmen 2 % Hypothek, 1,5 % Wertsteigerung und eingesparter, indexierter Miete. Eigenmietwert und Steuern sind nicht modelliert.
+
 ## GUI
 
 ```bash
