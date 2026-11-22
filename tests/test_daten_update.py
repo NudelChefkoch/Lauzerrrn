@@ -45,8 +45,8 @@ def test_update_produces_statements_and_better_outlook():
     upd = aktualisiere_aus_daten(ALEXIA, _months(12, ALEXIA.mu + 800, 8000), calib=C, n_paths=300)
     assert upd.monate == 12 and upd.person.mu > ALEXIA.mu
     assert upd.nachher["median_ende"] > upd.vorher["median_ende"] - 1e-6 or upd.nachher["netto_jetzt"] > 0
-    assert any(a.startswith("Typischer Monat") and "besser" in a for a in upd.aussagen)
-    assert any("Kredit" in a for a in upd.aussagen)
+    assert any(a.startswith("Typical month") and "better" in a for a in upd.aussagen)
+    assert any("credit" in a for a in upd.aussagen)
 
 
 def test_session_hook_restarts_with_updated_person():
@@ -56,3 +56,16 @@ def test_session_hook_restarts_with_updated_person():
     upd = s.aktualisiere_mit_daten(_months(6, ALEXIA.mu, 8000), n_paths=200)
     assert s.phase == "play" and s.turn == 0 and s.person == upd.person
     assert s.payload()["play"]["hud"]["cash"] == pytest.approx(upd.person.cash)
+
+
+def test_tips_and_investment_options():
+    from twin.tipps import tipps
+    t = tipps(ALEXIA, C, years=10, n_paths=200)
+    titles = [x["title"] for x in t["tips"]]
+    assert "You spend more than you earn" in titles                  # Alexia's typical month is negative
+    assert [s["key"] for s in t["styles"]] == ["cash", "konservativ", "ausgewogen", "risky"]
+    saver = C.persons["P00004"]
+    t2 = tipps(saver, C, years=20, n_paths=200)
+    assert any(x["title"] == "Let your savings work" for x in t2["tips"])
+    med = {s["key"]: s["median"] for s in t2["styles"]}
+    assert med["risky"] > med["ausgewogen"] > med["konservativ"] > med["cash"]

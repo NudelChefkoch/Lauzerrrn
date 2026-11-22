@@ -21,8 +21,8 @@ from .calibration import Calibration, Person
 from .config import OTHER, STATUS_TO_STATE
 
 # Situationen, die das Start-Formular anbietet (Schlüssel = employment_status der Challenge-Daten)
-STATUS_OPTIONS = {"student": "in Ausbildung", "employed": "angestellt", "part_time": "Teilzeit",
-                  "self_employed": "selbstständig", "unemployed": "ohne Job"}
+STATUS_OPTIONS = {"student": "in education", "employed": "employed", "part_time": "part-time",
+                  "self_employed": "self-employed", "unemployed": "without a job"}
 FIELDS = ("age", "status", "income", "expenses", "rent", "cash", "portfolio", "debt")
 DEFAULT_DEBT_RATE = 0.05
 AGE_MIN, AGE_MAX = 15, 70
@@ -77,7 +77,7 @@ def person_from_ist(calib: Calibration, ist: dict | None, name: str | None = Non
         sigma = sp.sigma * float(np.clip(scale, 0.5, 2.0))
     mu = v["income"] - v["expenses"]
     goal = (("Emergency savings", round(3 * v["expenses"], -2), 36),) if v["expenses"] > 0 else ()
-    return Person(profile_id="IST", name=name or "Du", age=v["age"], status=v["status"], state=state,
+    return Person(profile_id="IST", name=name or "You", age=v["age"], status=v["status"], state=state,
                   income=v["income"], rent=v["rent"], expenses=v["expenses"], mu=mu,
                   mu_se=float(sigma / np.sqrt(12)), sigma=float(sigma), cash=v["cash"], portfolio=v["portfolio"],
                   debt=v["debt"], debt_rate=DEFAULT_DEBT_RATE if v["debt"] > 0 else 0.0, goals=goal)

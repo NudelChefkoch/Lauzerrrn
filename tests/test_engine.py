@@ -130,9 +130,9 @@ def test_random_job_loss_hurts_on_average():
 
 def test_horizon_limits():
     with pytest.raises(ValueError):
-        run(years=26)
+        run(years=51)
     run(years=1, n_paths=10)
-    run(years=25, n_paths=10)
+    run(years=45, n_paths=10)          # a 20-year-old's road to retirement at 65
 
 
 def test_market_mean_matches_expected_return():
@@ -163,9 +163,9 @@ def test_game_locks_and_animations():
     from twin.scenarios import build_plan
     snap = Snapshot(0, 0, 1200, 8000, 0, 0, 8000, 8000)
     opts = dict((o.key, r) for o, r in available(Ctx(snap, frozenset(), 20, 0, frozenset())))
-    assert opts["bachelor"] is None and opts["master"] == "Erst Bachelor abschliessen"
-    assert opts["buy_house"] is not None and opts["child"] == "Ab 22"
-    plan = build_plan(ALEXIA, [Study(0, 36, 1500, None, 5200, 800, "Bachelor", "Bachelor-Abschluss")], 60, CALIB, Assumptions())
+    assert opts["bachelor"] is None and opts["master"] == "Finish a bachelor first"
+    assert opts["buy_house"] is not None and opts["child"] == "From age 22"
+    plan = build_plan(ALEXIA, [Study(0, 36, 1500, None, 5200, 800, "Bachelor", "Bachelor's degree")], 60, CALIB, Assumptions())
     assert finished_degrees(plan, 35) == frozenset() and finished_degrees(plan, 36) == {"bachelor"}
     played = set()
     kinds = [a["type"] for a in animations(plan, 24, 36, 3, played)]   # graduation lands on the arrival month

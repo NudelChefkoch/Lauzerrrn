@@ -62,11 +62,11 @@ const raw = (p, s, r = [0, 0, 0]) => new THREE.Matrix4().compose(V3(...p), new T
 
 // hat fit: crown = the hat covers the top of the head, peak = something sits on the very top (party hat),
 // fringe: full | low (squashed under a brim) | none (hidden under cap / beanie)
-const HEAD_COVER = ['gradcap', 'strohhut'];
+const HEAD_COVER = ['gradcap', 'strohhut', 'tophat', 'veil'];
 function hatFit(hat) {
   return {
-    crown: ['cap', 'beanie', 'strohhut', 'gradcap'].includes(hat), peak: hat === 'partyhut',
-    fringe: hat === 'cap' || hat === 'beanie' ? 'none' : (hat === 'strohhut' || hat === 'gradcap') ? 'low' : 'full',
+    crown: ['cap', 'beanie', 'strohhut', 'gradcap', 'tophat'].includes(hat), peak: hat === 'partyhut',
+    fringe: hat === 'cap' || hat === 'beanie' ? 'none' : ['strohhut', 'gradcap', 'tophat'].includes(hat) ? 'low' : 'full',
   };
 }
 
@@ -240,7 +240,7 @@ function hairMats(cfg, life) {
 
 function fitHair(ch) { // (re)builds the hair for the currently effective hat (worn hat or a head-covering prop)
   const u = ch.userData, P = u.parts, props = u.props;
-  const hat = props.gradcap ? 'gradcap' : props.strohhut ? 'strohhut' : u.cfg.hat;
+  const hat = props.gradcap ? 'gradcap' : props.strohhut ? 'strohhut' : props.tophat ? 'tophat' : props.veil ? 'veil' : u.cfg.hat;
   if (u.hatG) u.hatG.visible = hat === u.cfg.hat;
   if (P.hair && u.hairHat === hat) return u.hairModel;
   if (P.hair) P.head.remove(P.hair);
@@ -266,14 +266,19 @@ function buildCharacter(cfg, life = {}) {
   cfg = { ...DEFAULT_CFG, ...cfg };
   const g = new THREE.Group(); const P = {}; g.userData = { parts: P, t: Math.random() * 10, mode: 'idle', props: {}, cfg, life };
   const skin = M(SKINS[cfg.skin] || SKINS.rosig, .75);
-  const outfit = life.suit ? 'anzug' : cfg.outfit;
-  const main = M(COLORS[cfg.color] || COLORS.blau, .6);
+  // life.wedding: 'dress' (white wedding dress) | 'suit' (wedding suit) – worn only during the wedding scene
+  const outfit = life.wedding === 'dress' ? 'kleid' : (life.suit || life.wedding === 'suit') ? 'anzug' : cfg.outfit;
+  const main = life.wedding === 'dress' ? M('#fbfaf6', .45) : M(COLORS[cfg.color] || COLORS.blau, .6);
   const navy = M('#1f2740', .5), white = M('#f7f5f0', .6);
+  // women: A-line dress like the restroom pictogram (trapezoid from the shoulders down, legs below).
+  // The chosen outfit only adds details to the dress (hood, collar, stripes); a job means a navy dress.
+  const wc = cfg.gender === 'frau';
+  if (wc) return buildDressed(g, P, cfg, life, outfit, skin, main, navy, white);
   const pantsMat = outfit === 'anzug' ? navy : outfit === 'kleid' ? skin : outfit === 'sport' ? M('#e9e6df') : M('#3b4256');
   const topMat = outfit === 'anzug' ? navy : outfit === 'hemd' ? white : main;
   const bare = ['tshirt', 'kleid', 'sport'].includes(outfit);
   const armMat = bare ? skin : topMat;
-  const r = cfg.gender === 'mann' ? .42 : cfg.gender === 'frau' ? .36 : .39;
+  const r = cfg.gender === 'mann' ? .42 : .39;
 
   const body = new THREE.Group(); g.add(body); P.body = body;
   for (const s of [-1, 1]) {
@@ -294,7 +299,10 @@ function buildCharacter(cfg, life = {}) {
   }
   if (outfit === 'hemd' || outfit === 'anzug') {
     const v = add(body, new THREE.ConeGeometry(.15, .36, 3), white, 0, 1.3, front - .01); v.rotation.x = Math.PI;
-    add(body, new THREE.BoxGeometry(.075, .32, .03), M(outfit === 'anzug' ? '#c0392b' : (COLORS[cfg.color] || '#24365c')), 0, 1.12, front + .03);
+    if (life.wedding === 'suit') { // bow tie + boutonniere
+      for (const s of [-1, 1]) add(body, new THREE.ConeGeometry(.07, .12, 4), M('#1d1d24', .4), s * .06, 1.36, front + .03).rotation.z = s * Math.PI / 2;
+      add(body, new THREE.SphereGeometry(.05, 10, 8), M('#ff8fb1', .6), r * .55, 1.3, front - .02);
+    } else add(body, new THREE.BoxGeometry(.075, .32, .03), M(outfit === 'anzug' ? '#c0392b' : (COLORS[cfg.color] || '#24365c')), 0, 1.12, front + .03);
   }
   if (outfit === 'sport') for (const s of [-1, 1]) add(body, new THREE.BoxGeometry(.05, .55, .02), white, s * .2, 1.1, front);
   if (outfit === 'tshirt') add(body, new THREE.TorusGeometry(.17, .03, 8, 20), M(shade(COLORS[cfg.color] || '#2a78d6', -.12)), 0, 1.38, .1).rotation.x = Math.PI / 2.2;
@@ -308,7 +316,46 @@ function buildCharacter(cfg, life = {}) {
     sh.rotation.z = s * .12;
     P[s < 0 ? 'armL' : 'armR'] = sh; P[s < 0 ? 'handL' : 'handR'] = hand;
   }
+  return finishCharacter(g, P, body, cfg, life, skin);
+}
 
+// the A-line dress body (women) – same skeleton (legL/legR, armL/armR, handL/handR, body) as the default body
+function buildDressed(g, P, cfg, life, outfit, skin, main, navy, white) {
+  const wedding = life.wedding === 'dress';
+  const dressMat = wedding ? main : outfit === 'anzug' ? navy : main;
+  const accent = M(shade(wedding ? '#f3efe4' : outfit === 'anzug' ? '#1f2740' : (COLORS[cfg.color] || '#2a78d6'), -.1), .6);
+  const sleeves = wedding ? false : ['hoodie', 'hemd', 'anzug'].includes(outfit);
+  const body = new THREE.Group(); g.add(body); P.body = body; g.userData.restZ = .3;   // arms rest outside the dress
+  for (const s of [-1, 1]) {
+    const hip = new THREE.Group(); hip.position.set(s * .15, .72, 0); body.add(hip);
+    add(hip, new THREE.CapsuleGeometry(.11, .38, 6, 12), skin, 0, -.3, 0);
+    add(hip, new THREE.SphereGeometry(.15, 16, 12), M(outfit === 'sport' ? '#ffffff' : '#2b2b30', .5), 0, -.62, .07, 1, .6, 1.45);
+    P[s < 0 ? 'legL' : 'legR'] = hip;
+  }
+  // the pictogram trapezoid: narrow at the shoulders, wide at the hem (above the knees)
+  const dress = add(body, new THREE.CylinderGeometry(.25, .66, 1.02, 36), dressMat, 0, .97, 0); P.dress = dress;
+  add(body, new THREE.SphereGeometry(.25, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), dressMat, 0, 1.47, 0, 1, .45, 1);
+  add(body, new THREE.TorusGeometry(.655, .035, 8, 40), accent, 0, .48, 0).rotation.x = Math.PI / 2;   // hem
+  if (outfit === 'hoodie' && !wedding) add(body, new THREE.TorusGeometry(.22, .08, 10, 24), accent, 0, 1.5, -.08).rotation.x = Math.PI / 2.3;
+  if ((outfit === 'hemd' || outfit === 'anzug') && !wedding) {
+    for (const s of [-1, 1]) { const c = add(body, new THREE.ConeGeometry(.08, .16, 3), white, s * .07, 1.46, .23); c.rotation.set(Math.PI, 0, s * .5); }
+  }
+  if (outfit === 'sport' && !wedding) for (const y of [.62, .72]) add(body, new THREE.TorusGeometry(.66 - (y - .48) * .4, .02, 6, 40), white, 0, y, 0).rotation.x = Math.PI / 2;
+  if (outfit === 'kleid' || wedding) add(body, new THREE.TorusGeometry(.4, .04, 8, 32), accent, 0, 1.12, 0).rotation.x = Math.PI / 2;   // belt
+  for (const s of [-1, 1]) {
+    const sh = new THREE.Group(); sh.position.set(s * .35, 1.36, 0); body.add(sh);
+    add(sh, new THREE.CapsuleGeometry(.1, .32, 6, 12), sleeves ? dressMat : skin, 0, -.24, 0);
+    if (!sleeves) add(sh, new THREE.SphereGeometry(.13, 12, 10), dressMat, 0, -.02, 0, 1, .8, 1);
+    const hand = new THREE.Group(); hand.position.set(0, -.5, 0); sh.add(hand);
+    add(hand, new THREE.SphereGeometry(.115, 12, 10), skin);
+    sh.rotation.z = s * .3;
+    P[s < 0 ? 'armL' : 'armR'] = sh; P[s < 0 ? 'handL' : 'handR'] = hand;
+  }
+  return finishCharacter(g, P, body, cfg, life, skin);
+}
+
+// head, face, hair and hat – shared by both bodies
+function finishCharacter(g, P, body, cfg, life, skin) {
   const head = new THREE.Group(); head.position.y = 1.84; body.add(head); P.head = head;
   add(head, new THREE.SphereGeometry(.55, 32, 24), skin, 0, 0, 0, 1, .95, .95);
   for (const s of [-1, 1]) add(head, new THREE.SphereGeometry(.1, 12, 10), skin, s * .53, -.02, 0);
@@ -371,6 +418,22 @@ function addProp(ch, name) {
       add(grp, new THREE.TorusGeometry(.07, .02, 8, 16, Math.PI), M('#4a2c18'), 0, -.05, 0); break;
     case 'cane': parent = P.handR; add(grp, new THREE.CylinderGeometry(.03, .03, .95, 10), M('#7a4a2b', .5), 0, -.45, .05);
       add(grp, new THREE.TorusGeometry(.08, .03, 8, 16, Math.PI), M('#7a4a2b', .5), .08, 0, .05); break;
+    case 'tophat': add(grp, new THREE.CylinderGeometry(.34, .36, .52, 28), M('#1d1d24', .45), 0, .78, 0);
+      add(grp, new THREE.CylinderGeometry(.56, .56, .04, 32), M('#1d1d24', .45), 0, .52, 0);
+      add(grp, new THREE.CylinderGeometry(.365, .365, .1, 28), M('#c9a227', .4), 0, .6, 0); break;
+    case 'veil': { // flower crown + translucent veil falling down the back
+      const ring = add(grp, new THREE.TorusGeometry(.5, .045, 8, 32), M('#5fa85a', .7), 0, .4, -.02); ring.rotation.x = Math.PI / 2 - .25;
+      const fc = ['#ffffff', '#ffd23f', '#ff8fb1'];
+      for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2;
+        add(grp, new THREE.SphereGeometry(.075, 10, 8), M(fc[i % 3], .6), Math.cos(a) * .5, .4 + Math.sin(a) * .12, Math.sin(a) * .5 - .02); }
+      const veil = add(grp, new THREE.CylinderGeometry(.5, .85, 1.5, 28, 1, true, Math.PI * .55, Math.PI * .9),
+        new THREE.MeshStandardMaterial({ color: '#ffffff', transparent: true, opacity: .55, roughness: .4, side: THREE.DoubleSide, depthWrite: false }), 0, -.3, -.12);
+      veil.castShadow = false; break; }
+    case 'bouquet': { parent = P.handR; const b = new THREE.Group(); b.position.set(0, .05, .12); grp.add(b);
+      add(b, new THREE.ConeGeometry(.13, .32, 12), M('#f3efe4', .7), 0, -.12, 0).rotation.x = Math.PI;
+      const fc = ['#ff8fb1', '#ffffff', '#ffd23f', '#e34948', '#ff8fb1'];
+      fc.forEach((c, i) => { const a = i / fc.length * Math.PI * 2; add(b, new THREE.SphereGeometry(.08, 10, 8), M(c, .6), Math.cos(a) * .09, .08, Math.sin(a) * .09); });
+      add(b, new THREE.SphereGeometry(.08, 10, 8), M('#ffffff', .6), 0, .13, 0); break; }
     case 'baby': { parent = P.body; const b = new THREE.Group(); b.position.set(0, 1.08, .5); grp.add(b);
       add(b, new THREE.CapsuleGeometry(.17, .22, 6, 12), M('#9fd3f5', .9), 0, 0, 0).rotation.z = Math.PI / 2;
       add(b, new THREE.SphereGeometry(.15, 16, 12), M(SKINS[ch.userData.cfg.skin] || '#f2c2a2', .75), .27, .08, .02);
@@ -403,7 +466,7 @@ function animateCharacter(ch, dt) {
     P.body.position.y = 0;
   } else {
     P.legL.rotation.x *= .85; P.legR.rotation.x *= .85;
-    if (!u.hold) { P.armL.rotation.x *= .85; P.armR.rotation.x *= .85; P.armL.rotation.z = lerp(P.armL.rotation.z, -.12, .15); P.armR.rotation.z = lerp(P.armR.rotation.z, .12, .15); }
+    if (!u.hold) { P.armL.rotation.x *= .85; P.armR.rotation.x *= .85; const rz = u.restZ || .12; P.armL.rotation.z = lerp(P.armL.rotation.z, -rz, .15); P.armR.rotation.z = lerp(P.armR.rotation.z, rz, .15); }
     P.body.position.y = Math.sin(u.t * 2.2) * .02;
   }
   P.head.rotation.z = Math.sin(u.t * 1.3) * .03;
@@ -434,7 +497,9 @@ function buildCar(color) {
 function seat(ch, car, x = -.12, scale = .5) {
   car.add(ch); ch.position.set(x, .28, 0); ch.rotation.set(0, Math.PI / 2, 0); ch.scale.setScalar(scale);
   ch.userData.parts.legL.visible = ch.userData.parts.legR.visible = false; ch.userData.mode = 'seated';
+  if (ch.userData.parts.dress) ch.userData.parts.dress.scale.set(.62, 1, .62);   // tuck the dress into the seat
 }
+function unseat(ch) { if (ch.userData.parts.dress) ch.userData.parts.dress.scale.set(1, 1, 1); }
 
 /* =================================================================== podium */
 const tierCache = new Map();
@@ -464,4 +529,4 @@ function buildPodium() { // top surface at y = 0 (the character stands on it), f
   return g;
 }
 
-export { buildCharacter, addProp, removeProp, animateCharacter, buildCar, seat, buildPodium };
+export { buildCharacter, addProp, removeProp, animateCharacter, buildCar, seat, unseat, buildPodium };

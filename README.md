@@ -41,4 +41,11 @@ The challenge data is **not** in this repo. By default it is read from `../ai-fi
 simulation backend: `twin/session.py` (GameSession) produces the payload, `twin/frontend3d/` is the client
 (three.js bundled locally, fonts Lilita One + Nunito under OFL). Contract: `twin/frontend3d/CONTRACT.md`.
 The analysis dashboard is reachable from the title screen ("ANALYSE").
-No XP/levels. The investment style (risk) is not asked at the start but from station 2 in the Geld category.
+The game starts with YOUR status quo (one example data set can pre-fill the form) and runs year by year to retirement
+at 65. No achievements, no joy meter, no Money tab (investing + tips live in the analysis, `twin/tipps.py`);
+Career = Entry job, Job change, Part-time; Housing = buy a home (UBS mortgage) or rent a luxury flat.
+Later real monthly data (CSV: `month,net_transactions_chf[,closing_cash_chf]`) can be replayed as a film ride: the twin is
+updated with `twin/daten_update.py` and drives through the months, then shows the updated statements.
+The whole GUI (game + analysis) is in English. No XP/levels. A fresh game starts with an intro (fly-over of the island,
+how to play, countdown; skippable). The investment style (risk) is not asked at the start but from station 2 in the Money
+category. "Get married" plays its own wedding scene (chapel, guests, partner) and the partner then rides along in the car.

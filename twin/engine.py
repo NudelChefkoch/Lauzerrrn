@@ -67,8 +67,8 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
     if isinstance(person, str):
         person = calib.persons[person]
     a = a or Assumptions()
-    if not 1 <= years <= 25:
-        raise ValueError("years must be between 1 and 25")
+    if not 1 <= years <= 50:
+        raise ValueError("years must be between 1 and 50")
     T, N = 12 * years, (n_paths if stochastic else 1)
     plan = build_plan(person, events or [], T, calib, a)
     rng = np.random.default_rng(seed)

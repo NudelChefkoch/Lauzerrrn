@@ -11,7 +11,7 @@ button, [data-testid^="stBaseButton"], [data-baseweb="tag"] { border-radius: 999
 
 # the game page is the whole app; the analysis page is reached from inside the game (and links back)
 pg = st.navigation([
-    st.Page("ui/spiel.py", title="Spiel", icon="🎮", default=True),
-    st.Page("ui/analyse.py", title="Analyse", icon="📊"),
+    st.Page("ui/spiel.py", title="Game", icon="🎮", default=True),
+    st.Page("ui/analyse.py", title="Analysis", icon="📊"),
 ], position="hidden")
 pg.run()

@@ -18,10 +18,18 @@ const OPTIONS = {
   color: Object.keys(COLORS),
   car: Object.keys(COLORS),
 };
-const CAT_LABEL = { gender: 'Geschlecht', skin: 'Hautton', hair: 'Frisur', hairColor: 'Haarfarbe', hat: 'Hut',
-                    outfit: 'Outfit', color: 'Farbe', car: 'Auto' };
-const NICE = { keiner: 'kein Hut', kopfhoerer: 'Kopfhörer', strohhut: 'Strohhut', partyhut: 'Partyhut', tshirt: 'T-Shirt',
-               tuerkis: 'türkis', gruen: 'grün', weiss: 'weiss', pferdeschwanz: 'Pferdeschwanz', dunkelbraun: 'dunkelbraun' };
+const CAT_LABEL = { gender: 'Gender', skin: 'Skin tone', hair: 'Hair', hairColor: 'Hair colour', hat: 'Hat',
+                    outfit: 'Outfit', color: 'Colour', car: 'Car' };
+// display names (English) for the option ids above; the ids themselves stay as they are (avatar contract)
+const NICE = {
+  frau: 'woman', mann: 'man', divers: 'diverse',
+  hell: 'light', rosig: 'rosy', oliv: 'olive', mittel: 'medium', braun: 'brown', dunkel: 'dark',
+  kurz: 'short', lang: 'long', dutt: 'bun', locken: 'curls', pferdeschwanz: 'ponytail', afro: 'afro', iro: 'mohawk', glatze: 'bald',
+  schwarz: 'black', dunkelbraun: 'dark brown', blond: 'blond', rot: 'red', pink: 'pink', blau: 'blue', grau: 'grey',
+  keiner: 'no hat', cap: 'cap', beanie: 'beanie', strohhut: 'straw hat', partyhut: 'party hat', kopfhoerer: 'headphones',
+  hoodie: 'hoodie', tshirt: 'T-shirt', hemd: 'shirt', kleid: 'dress', sport: 'sportswear',
+  orange: 'orange', tuerkis: 'turquoise', gelb: 'yellow', gruen: 'green', violett: 'violet', weiss: 'white', navy: 'navy',
+};
 const DEFAULT_CFG = { name: 'Alex', gender: 'frau', skin: 'rosig', hair: 'lang', hairColor: 'braun', hat: 'keiner',
                       outfit: 'hoodie', color: 'violett', car: 'tuerkis' };
 
@@ -54,11 +62,12 @@ function sprite(text, size = 1, bg = null) {
 
 /* =================================================================== tweens */
 const tasks = [];
-const tween = (dur, fn) => new Promise(res => tasks.push({ t: 0, dur, fn, res }));
-const wait = s => tween(s, () => {});
+// ctl (optional): { skip: true } jumps the tween to its end on the next frame (used to skip the intro)
+const tween = (dur, fn, ctl = null) => new Promise(res => tasks.push({ t: 0, dur, fn, res, ctl }));
+const wait = (s, ctl = null) => tween(s, () => {}, ctl);
 function runTasks(dt) {
   for (let i = tasks.length - 1; i >= 0; i--) {
-    const k = tasks[i]; k.t += dt; const x = Math.min(1, k.t / k.dur); k.fn(x);
+    const k = tasks[i]; k.t += dt; const x = k.ctl && k.ctl.skip ? 1 : Math.min(1, k.t / k.dur); k.fn(x);
     if (x >= 1) { tasks.splice(i, 1); k.res(); }
   }
 }

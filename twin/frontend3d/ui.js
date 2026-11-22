@@ -5,18 +5,18 @@ import { OPTIONS, CAT_LABEL, NICE, DEFAULT_CFG, SKINS, HAIRC, COLORS } from './c
 
 /* =================================================================== helpers */
 const TIPS = [
-  'Früh anfangen lohnt sich: Der Zinseszins liebt Geduld.',
-  'Ein Notgroschen von 3–6 Monatsausgaben schützt vor teuren Krediten.',
-  'Konsumkredite und Kreditkarten kosten schnell 10 % Zins und mehr.',
-  'Breit gestreute ETFs verteilen das Risiko auf hunderte Firmen.',
-  'Säule 3a: Steuern sparen und gleichzeitig fürs Alter vorsorgen.',
-  'Mehr Lohn heisst nicht automatisch mehr ausgeben – Vorsicht vor Lifestyle-Inflation.',
-  'Wer seine Ausgaben kennt, kann sie steuern: Ein Budget wirkt Wunder.',
-  'Schwankungen gehören zum Anlegen – wer lange dabeibleibt, gewinnt oft.',
-  'Erst Schulden mit hohem Zins abbauen, dann investieren.',
-  'Kleine Beträge, regelmässig gespart, werden über Jahre gross.',
-];
-const WAIT_TXT = ['Das Leben würfelt', 'Die Zukunft wird simuliert', 'Tausend Leben werden durchgerechnet', 'Der Zufall mischt die Karten'];
+  'Start early: compound interest loves patience.',
+  'An emergency fund of 3–6 months of expenses keeps you away from expensive credit.',
+  'Consumer loans and credit cards quickly cost 10 % interest or more.',
+  'Broad ETFs spread the risk over hundreds of companies.',
+  'Pillar 3a: save taxes and build your retirement at the same time.',
+  'A higher salary does not have to mean higher spending – watch out for lifestyle inflation.',
+  'If you know your expenses, you can steer them: a budget works wonders.',
+  'Ups and downs are part of investing – staying in for the long run usually pays.',
+  'Pay off high-interest debt first, then invest.',
+  'Small amounts saved regularly grow big over the years.',
+]
+const WAIT_TXT = ['Life is rolling the dice', 'Simulating your future', 'Crunching a thousand lives', 'Chance is shuffling the cards'];
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (v, d = 0) => (v === null || v === undefined || v === '' || !Number.isFinite(+v)) ? d : +v;
@@ -39,20 +39,20 @@ const arr = v => Array.isArray(v) ? v : [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Ist-Zustand form (start panel): field, label, kind
 const IST_FIELDS = [
-  ['age', 'Alter', 'int'], ['status', 'Situation', 'status'],
-  ['income', 'Netto-Einkommen / Monat', 'chf'], ['expenses', 'Ausgaben / Monat (alles)', 'chf'],
-  ['rent', 'davon Miete / Monat', 'chf'], ['cash', 'Konto & Bargeld', 'chf'],
-  ['portfolio', 'Anlagen (Wertschriften)', 'chf'], ['debt', 'Schulden / Kredite', 'chf'],
+  ['age', 'Age', 'int'], ['status', 'Situation', 'status'],
+  ['income', 'Net income / month', 'chf'], ['expenses', 'Expenses / month (all)', 'chf'],
+  ['rent', 'of which rent / month', 'chf'], ['cash', 'UBS account & cash', 'chf'],
+  ['portfolio', 'Investments (securities)', 'chf'], ['debt', 'Debt / loans', 'chf'],
 ];
 function profileEmoji(status, i) {
   const s = String(status || '').toLowerCase();
-  if (/lehre|ausbildung/.test(s)) return '🧰';
-  if (/stud|uni|hochschule/.test(s)) return '📚';
-  if (/schul|gymi|gymnas/.test(s)) return '🎒';
-  if (/selbst|gründ/.test(s)) return '🚀';
-  if (/arbeitslos|such/.test(s)) return '🔎';
-  if (/teilzeit/.test(s)) return '⏳';
-  if (/angestellt|job|beruf|arbeit/.test(s)) return '💼';
+  if (/apprentice|lehre/.test(s)) return '🧰';
+  if (/education|stud|uni/.test(s)) return '📚';
+  if (/self|startup/.test(s)) return '🚀';
+  if (/without|unemployed|looking/.test(s)) return '🔎';
+  if (/part/.test(s)) return '⏳';
+  if (/retired/.test(s)) return '🌅';
+  if (/employ|job|work/.test(s)) return '💼';
   return ['🙂', '😎', '🤓', '😄', '🥳', '😌'][i % 6];
 }
 const SWATCH = { skin: SKINS, hairColor: HAIRC, color: COLORS, car: COLORS };
@@ -76,7 +76,7 @@ export function drawFan(cv, fan, opt = {}) {
   g.font = `800 ${small ? 10 : 12}px Nunito, system-ui, sans-serif`; g.textBaseline = 'middle';
   const msg = t => { g.fillStyle = '#6b6394'; g.textAlign = 'center'; g.fillText(t, W / 2, H / 2); };
   const ages = fan && Array.isArray(fan.ages) ? fan.ages : []; const n = ages.length;
-  if (n < 2) return msg('Noch keine Daten');
+  if (n < 2) return msg('No data yet');
   const A = k => { const a = arr(fan[k]); return Array.from({ length: n }, (_, i) => (a[i] === null || a[i] === undefined || !Number.isFinite(+a[i])) ? null : +a[i]); };
   const past = A('past'), p5 = A('p5'), p50 = A('p50'), p95 = A('p95'), lazy = opt.lazy ? A('lazy') : null;
   let lastPast = 0; past.forEach((v, i) => { if (v !== null) lastPast = i; });
@@ -86,7 +86,7 @@ export function drawFan(cv, fan, opt = {}) {
   past.forEach((v, i) => { if (v !== null && i <= ni) vals.push(v); });
   for (let i = bf; i < n; i++) for (const v of [p5[i], p50[i], p95[i]]) if (v !== null) vals.push(v);
   if (lazy) lazy.forEach(v => { if (v !== null) vals.push(v); });
-  if (!vals.length) return msg('Noch keine Daten');
+  if (!vals.length) return msg('No data yet');
   let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals); if (hi - lo < 1) hi = lo + 1;
   const pad = (hi - lo) * .07; if (lo < 0) lo -= pad; hi += pad;
   const L = small ? 40 : 60, R = 10, T = 8, B = small ? 18 : 24;
@@ -106,7 +106,7 @@ export function drawFan(cv, fan, opt = {}) {
   const used = [];
   for (const i of [...xl].sort((a, b) => a - b)) {
     const x = X(i); if (used.some(u => Math.abs(u - x) < (small ? 30 : 34))) continue; used.push(x);
-    g.fillText(`${num(ages[i])} J.`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
+    g.fillText(`${num(ages[i])} y`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
   }
   const line = (a, from, to, color, width, dash = [], outline = 0) => {
     const pts = []; for (let i = from; i <= to; i++) if (a[i] !== null) pts.push([X(i), Y(a[i])]);
@@ -142,13 +142,13 @@ function gaugeSvg(pct) {
 }
 
 /* =================================================================== UI */
-export function createUI(root, { send, engineOk = true, standalone = false } = {}) {
+export function createUI(root, { send, engineOk = true, standalone = false, onSkipIntro = null } = {}) {
   const stage = document.getElementById('stage');
   const st = {
     screen: null, P: null, sig: null, loaded: false, cfg: { ...DEFAULT_CFG }, touched: false, cat: 'gender',
     ist: null, istBuilt: false, styleHinted: false, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
     busy: false, busySince: 0, waiting: false, waitSeq: -1, waitPhase: null, waitTimer: 0,
-    enginePhase: null, celebrated: new Set(), celPending: null,
+    enginePhase: null, intro: false, introTimers: [], csv: null, csvName: '', ride: false,
   };
   const E = (fn, ...a) => { if (!engineOk) return; try { return fn(...a); } catch (e) { console.warn('[game] engine call failed', e); } };
 
@@ -164,59 +164,70 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       <h1 class="logo logo-xl"><span class="l1">YOUR LIFE ·</span><span class="l2">YOUR CHOICE</span></h1>
       <div class="loadbar"><i></i></div>
       <div class="load-pct ol">0 %</div>
-      <p class="tip"><b>TIPP</b> <span></span></p>
+      <p class="tip"><b>TIP</b> <span></span></p>
     </div>
   </section>
 
   <section class="screen scr-title" data-s="title">
     <h1 class="logo logo-md"><span class="l1">YOUR LIFE ·</span><span class="l2">YOUR CHOICE</span></h1>
-    <p class="tagline ol">Triff Entscheidungen. Erlebe die Folgen.</p>
+    <p class="tagline ol">Make choices. Live the consequences.</p>
     <div class="title-btns pe">
-      <button class="btn btn-xl btn-green" data-act="toCreator">SPIELEN</button>
-      <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSE</button>
+      <button class="btn btn-xl btn-green" data-act="toCreator">PLAY</button>
+      <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSIS</button>
     </div>
-    <div class="hint">Figur ziehen zum Drehen · Enter zum Spielen</div>
+    <div class="hint">Drag the figure to turn it · Enter to play</div>
   </section>
 
   <section class="screen scr-creator" data-s="creator">
     <div class="cr-left">
-      <div class="cr-top pe"><button class="btn-round sm blue" data-act="toTitle" title="Zurück">◀</button><h2 class="hdr ol">DEINE FIGUR</h2></div>
+      <div class="cr-top pe"><button class="btn-round sm blue" data-act="toTitle" title="Back">◀</button><h2 class="hdr ol">YOUR CHARACTER</h2></div>
       <div class="chips pe"></div>
-      <button class="btn-round big arrow left pe" data-act="prev" title="Vorherige Option (←)">◀</button>
-      <button class="btn-round big arrow right pe" data-act="next" title="Nächste Option (→)">▶</button>
+      <button class="btn-round big arrow left pe" data-act="prev" title="Previous option (←)">◀</button>
+      <button class="btn-round big arrow right pe" data-act="next" title="Next option (→)">▶</button>
       <div class="plate pe"><div class="plate-cat"></div><div class="plate-val"></div><div class="pips"></div></div>
       <div class="namebar pe">
-        <div class="namefield"><label for="ylyc-name">NAME</label><input id="ylyc-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Dein Name"></div>
-        <button class="btn-round dicebtn" data-act="rand" title="Zufällige Figur"><span>🎲</span></button>
+        <div class="namefield"><label for="ylyc-name">NAME</label><input id="ylyc-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Your name"></div>
+        <button class="btn-round dicebtn" data-act="rand" title="Random look"><span>🎲</span></button>
       </div>
     </div>
     <aside class="cr-panel pe">
-      <div class="panel-head"><span class="ol">DEIN START</span></div>
+      <div class="panel-head"><span class="ol">YOUR START</span></div>
       <div class="panel-body">
-        <h3 class="sec">1 · Wo stehst du heute?</h3>
-        <p class="ist-note">Trag deine aktuellen Zahlen ein – oder übernimm ein Beispiel und pass es an.</p>
+        <h3 class="sec">1 · Your status quo</h3>
+        <p class="ist-note">Enter your own numbers as they are today. No numbers at hand? Load the example data set.</p>
         <div class="ist-ex"></div>
-        <h3 class="sec">2 · Dein Ist-Zustand</h3>
         <div class="ist-form"></div>
-        <p class="ist-note">📊 Deinen Anlagestil wählst du später im Spiel – ab Station 2 unter „Geld“.</p>
+        <p class="ist-note">🛣️ Your road runs year by year from your age to retirement at <b class="ret-age">65</b>.
+          📊 How to invest is compared later in the analysis – with tips for your data.</p>
+        <h3 class="sec">2 · Later: replay your real data</h3>
+        <p class="ist-note">Collected your real monthly numbers since then? Upload them as CSV – the twin updates its
+          statements and drives you through your months as a film ride. Or watch the example data set's recorded months.</p>
+        <div class="ride-box">
+          <label class="btn btn-sm btn-blue file-btn">📄 CHOOSE CSV<input type="file" class="csv-in" accept=".csv,text/csv"></label>
+          <span class="csv-name">no file chosen</span>
+          <div class="ride-row">
+            <button class="btn btn-sm btn-purple" data-act="rideSample" data-wlock title="Ride through the recorded months of the example data set">📋 EXAMPLE DATA RIDE</button>
+            <button class="btn btn-sm btn-green" data-act="ride" data-wlock title="Ride through the months of your CSV">🎬 MY DATA RIDE</button>
+          </div>
+          <a class="tpl-link" href="#" data-act="template">Download a CSV template</a>
+        </div>
       </div>
-      <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LOSFAHREN</button></div>
+      <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LET'S GO</button></div>
     </aside>
   </section>
 
   <section class="screen scr-play" data-s="play">
     <header class="hud pe"></header>
     <aside class="side pe"><div class="side-inner">
-      <h3>🎯 Ziele</h3><div class="quests"></div>
-      <h3>🏆 Erfolge <small class="achn"></small></h3><div class="achs"></div>
-      <h3>📈 Dein Vermögen</h3><div class="fanbox"><canvas class="fan-play"></canvas></div>
-      <div class="legend"><span><i style="border-color:#ff3d8b"></i>bisher</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>p5–p95</span></div>
-      <h3 class="hist-h">🧭 Deine Stationen</h3><div class="hist"></div>
+      <h3>🎯 Goals</h3><div class="quests"></div>
+      <h3>📈 Your net worth</h3><div class="fanbox"><canvas class="fan-play"></canvas></div>
+      <div class="legend"><span><i style="border-color:#ff3d8b"></i>so far</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>p5–p95</span></div>
+      <h3 class="hist-h">🧭 Your stations</h3><div class="hist"></div>
     </div></aside>
     <div class="tray pe"><div class="tray-head"></div><div class="tray-row"></div></div>
-    <div class="busy-pill">🎬 Das Leben passiert …</div>
+    <div class="busy-pill">🎬 Life is happening …</div>
     <footer class="dock pe"><div class="cats"></div>
-      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>WEITERFAHREN</button>
+      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>DRIVE ON</button>
     </footer>
   </section>
 
@@ -227,7 +238,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       <div class="res-sub"></div>
       <div class="res-stats"></div>
       <div class="res-list"></div>
-      <div class="res-foot"><button class="btn btn-lg btn-green" data-act="toFacts">WEITER ▶</button></div>
+      <div class="res-foot"><button class="btn btn-lg btn-green" data-act="toFacts">NEXT ▶</button></div>
     </div>
   </section>
 
@@ -239,38 +250,65 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
         <div class="facts-tiles"></div>
         <div class="facts-side">
           <div class="tile gauge"></div>
-          <div class="tile chart"><div class="k">📈 Dein Leben vs. nur weitergefahren</div>
+          <div class="tile chart"><div class="k">📈 Your life vs. just driving on</div>
             <div class="fanbox"><canvas class="fan-end"></canvas></div>
-            <div class="legend"><span><i style="border-color:#ff3d8b"></i>dein Leben</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>Spanne p5–p95</span><span><i style="border-color:#9a94b8"></i>nur weitergefahren</span></div>
+            <div class="legend"><span><i style="border-color:#ff3d8b"></i>your life</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>range p5–p95</span><span><i style="border-color:#9a94b8"></i>just driving on</span></div>
           </div>
         </div>
       </div>
       <p class="disclaimer"></p>
       <div class="res-foot">
-        <button class="btn btn-sm btn-purple" data-act="toSummary">◀ ZURÜCK</button>
-        <button class="btn btn-lg btn-pink" data-act="restart" data-wlock>NOCHMAL SPIELEN</button>
-        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>ANALYSE</button>
+        <button class="btn btn-sm btn-purple" data-act="toSummary">◀ BACK</button>
+        <button class="btn btn-lg btn-pink" data-act="restart" data-wlock>PLAY AGAIN</button>
+        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>💡 TIPS & ANALYSIS</button>
       </div>
     </div>
   </section>
 
+  <div class="intro" aria-live="polite">
+    <div class="intro-banner"><div class="ib-tag"><span class="ib-name"></span><span class="ib-ages"></span></div>
+      <div class="ib-bar"><span class="ib-text"></span></div></div>
+    <div class="intro-howto"><div class="ih-head">HOW TO PLAY</div><ul class="ih-list"></ul></div>
+    <div class="intro-count"><span></span></div>
+    <button class="btn btn-sm btn-purple intro-skip" data-act="skipIntro" title="Skip the intro (Space)">SKIP ▶▶</button>
+  </div>
   <div class="toasts"></div>
   <div class="waitbox"><div class="wcard"><span class="dice">🎲</span><span class="wtxt"><span class="wlabel"></span><span class="wdots"></span></span></div></div>
-  <div class="celebrate"><div class="confetti"></div><div class="cel-card">
-    <h3 class="cel-h ol">ERFOLG FREIGESCHALTET!</h3><div class="cel-list"></div>
-    <button class="btn btn-lg btn-yellow" data-act="celClose">SUPER!</button></div></div>`;
+  <section class="screen scr-ride" data-s="ride">
+    <div class="ride-title pe"><span class="rt-k">🎬 FILM RIDE</span><span class="rt-v"></span></div>
+    <div class="ride-cap"><div class="rc-label"></div><div class="rc-row"><span class="rc-flow"></span><span class="rc-bal"></span></div>
+      <div class="rc-note"></div><div class="rc-dots"></div></div>
+    <button class="btn btn-sm btn-purple ride-skip pe" data-act="rideSkip" title="Skip to the result (Space)">SKIP ▶▶</button>
+    <div class="ride-end pe">
+      <div class="res-tag">UPDATED</div>
+      <h2 class="res-h ol">WHAT YOUR DATA SAYS</h2>
+      <div class="res-sub ride-sub"></div>
+      <div class="ride-kpis"></div>
+      <ul class="ride-statements"></ul>
+      <p class="disclaimer">Synthetic model · not a forecast · not investment advice</p>
+      <div class="res-foot">
+        <button class="btn btn-sm btn-purple" data-act="restart" data-wlock>◀ BACK</button>
+        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>💡 TIPS IN THE ANALYSIS</button>
+        <button class="btn btn-lg btn-pink" data-act="ridePlay" data-wlock>PLAY WITH UPDATED DATA</button>
+      </div>
+    </div>
+  </section>`;
 
   const $ = s => root.querySelector(s);
   const screens = {}; root.querySelectorAll('.screen').forEach(el => { screens[el.dataset.s] = el; });
   const R = {
     loadBar: $('.loadbar i'), loadPct: $('.load-pct'), tip: $('.tip'), tipTxt: $('.tip span'),
     chips: $('.chips'), plateCat: $('.plate-cat'), plateVal: $('.plate-val'), pips: $('.pips'), name: $('#ylyc-name'),
-    istEx: $('.ist-ex'), istForm: $('.ist-form'),
-    hud: $('.hud'), side: $('.side'), quests: $('.quests'), achs: $('.achs'), achn: $('.achn'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
+    istEx: $('.ist-ex'), istForm: $('.ist-form'), csvIn: $('.csv-in'), csvName: $('.csv-name'), retAge: $('.ret-age'),
+    rideV: $('.rt-v'), rideCap: $('.ride-cap'), rcLabel: $('.rc-label'), rcFlow: $('.rc-flow'), rcBal: $('.rc-bal'), rcNote: $('.rc-note'),
+    rcDots: $('.rc-dots'), rideEnd: $('.ride-end'), rideSub: $('.ride-sub'), rideKpis: $('.ride-kpis'), rideSt: $('.ride-statements'),
+    hud: $('.hud'), side: $('.side'), quests: $('.quests'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
     tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'),
     resSub: $('.res-sub'), resStats: $('.res-stats'), resList: $('.res-list'),
     factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'), disclaimer: $('.disclaimer'),
-    toasts: $('.toasts'), waitLabel: $('.wlabel'), cel: $('.celebrate'), celList: $('.cel-list'), confetti: $('.confetti'),
+    intro: $('.intro'), ibName: $('.ib-name'), ibAges: $('.ib-ages'), ibText: $('.ib-text'), ihList: $('.ih-list'),
+    count: $('.intro-count span'),
+    toasts: $('.toasts'), waitLabel: $('.wlabel'),
   };
   if (fanRO) { fanRO.observe(R.fanPlay); fanRO.observe(R.fanEnd); }
 
@@ -286,7 +324,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (name === 'creator') renderCreator();
     if (name === 'facts') requestAnimationFrame(() => drawFan(R.fanEnd, R.fanEnd._fan, R.fanEnd._opt));
     if (name === 'play') requestAnimationFrame(() => drawFan(R.fanPlay, R.fanPlay._fan, R.fanPlay._opt));
-    if (name !== 'play') root.classList.remove('play-busy');
+    if (name !== 'play') { root.classList.remove('play-busy'); if (st.intro) intro('end'); }
     updateLocks();
   }
 
@@ -296,7 +334,12 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       const reset = st.enginePhase !== null && st.enginePhase !== 'play';
       st.enginePhase = 'play';
       E(showWorld, p.play.world || {}, { reset });
-      go('play'); renderPlay(); queueCelebration();
+      go('play'); renderPlay();
+    } else if (phase === 'ride' && p.ride) {
+      st.enginePhase = 'ride'; st.ride = true;
+      E(showWorld, p.ride.world || {}, { reset: true });
+      go('ride'); renderRideStart();
+      if (!engineOk) rideEvent('end');
     } else if (phase === 'end' && p.end) {
       const reset = st.enginePhase === 'boot';
       st.enginePhase = 'end';
@@ -304,7 +347,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       if (st.screen !== 'facts') go('summary');
       renderSummary(); renderFacts();
     } else {
-      st.enginePhase = 'boot'; st.styleHinted = false;
+      st.enginePhase = 'boot'; st.styleHinted = false; st.ride = false;
       if (st.screen === 'loading' || !st.screen) go('title');
       else if (st.screen === 'title' || st.screen === 'creator') renderStartPanel();
       else go('creator');
@@ -333,7 +376,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       const target = ready ? 100 : Math.min(92, (el / MIN) * 88 + (fontsDone ? 4 : 0));
       shown += (target - shown) * (ready ? .25 : .12);
       R.loadBar.style.width = shown.toFixed(1) + '%'; R.loadPct.textContent = Math.round(shown) + ' %';
-      if (!haveP && el > MIN + 400 && !connectMsg) { connectMsg = true; showTip('Verbinde mit der Simulation …'); }
+      if (!haveP && el > MIN + 400 && !connectMsg) { connectMsg = true; showTip('Connecting to the simulation …'); }
       if (ready && shown > 99.2) {
         R.loadBar.style.width = '100%'; R.loadPct.textContent = '100 %';
         clearInterval(tipTimer); setTimeout(() => { st.loaded = true; route(); }, 260); return;
@@ -380,18 +423,17 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   }
   function renderStartPanel() {
     const boot = (st.P && st.P.boot) || {};
-    const profiles = arr(boot.profiles), statuses = arr(boot.statuses);
-    if (!st.ist && boot.ist) st.ist = { ...boot.ist };
-    R.istEx.innerHTML = profiles.length ? profiles.map((p, i) => `
-      <button class="exchip ${st.ist && st.ist.basis === p.id ? 'on' : ''}" data-act="ex" data-id="${esc(p.id)}"
-        title="${esc(`Start: ${chf(p.start_capital)} · pro Monat: ${chfSigned(p.typical_month)}`)}">
-        <span class="e">${profileEmoji(p.status_de, i)}</span><span><b>${esc(p.name)}${p.age !== undefined && p.age !== null ? ' · ' + num(p.age) : ''}</b><small>${esc(p.status_de || '')}</small></span>
-      </button>`).join('') : '<div class="empty">Beispiele werden geladen …</div>';
+    const ex = boot.example, statuses = arr(boot.statuses);
+    if (boot.retire_age) R.retAge.textContent = num(boot.retire_age, 65);
+    R.istEx.innerHTML = ex ? `
+      <button class="exchip ${st.ist && st.ist.basis === ex.id ? 'on' : ''}" data-act="ex">
+        <span class="e">📋</span><span><b>Load example data</b><small>${esc(ex.name)} · ${num(ex.age)} · ${esc(ex.status || '')}</small></span>
+      </button>` : '<div class="empty">Loading …</div>';
     if (!st.istBuilt && statuses.length) {
       R.istForm.innerHTML = IST_FIELDS.map(([k, label, kind]) => `
         <label class="ist-f ${kind === 'status' ? 'wide' : ''}"><span>${esc(label)}</span>${kind === 'status'
-          ? `<select data-ist="${k}">${statuses.map(o => `<option value="${esc(o.key)}">${esc(o.label)}</option>`).join('')}</select>`
-          : `<span class="inp">${kind === 'chf' ? '<i>CHF</i>' : ''}<input data-ist="${k}" type="number" inputmode="numeric" min="${kind === 'int' ? 15 : 0}" max="${kind === 'int' ? 70 : 9999999}" step="${kind === 'int' ? 1 : 50}"></span>`}
+          ? `<select data-ist="${k}">${statuses.map(o => `<option value="${esc(o.key)}" ${o.key === 'employed' ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`
+          : `<span class="inp">${kind === 'chf' ? '<i>CHF</i>' : ''}<input data-ist="${k}" type="number" inputmode="numeric" min="${kind === 'int' ? 15 : 0}" max="${kind === 'int' ? 70 : 9999999}" step="${kind === 'int' ? 1 : 50}" placeholder="${kind === 'int' ? 'e.g. 24' : '0'}"></span>`}
         </label>`).join('');
       st.istBuilt = true; fillIst();
     }
@@ -409,11 +451,33 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     });
     return out;
   }
-  function startGame() {
+  // the status quo must be entered (or the example loaded): age, income and expenses are required
+  function istReady() {
+    const v = {}; R.istForm.querySelectorAll('[data-ist]').forEach(el => { v[el.dataset.ist] = el.value; });
+    const missing = ['age', 'income', 'expenses'].filter(k => v[k] === undefined || String(v[k]).trim() === '');
+    if (missing.length) { toast('✏️ Please enter your status quo (age, income, expenses) – or load the example data', 3600); return false; }
+    return true;
+  }
+  function takeName() {
     const name = String(R.name.value || st.cfg.name || '').trim().slice(0, 16) || 'Alex';
     st.cfg = { ...st.cfg, name }; R.name.value = name;
-    st.ist = readIst(); st.styleHinted = false;
+  }
+  function startGame() {
+    if (!istReady()) return;
+    takeName(); st.ist = readIst(); st.styleHinted = false;
     act({ action: 'start', avatar: { ...st.cfg }, ist: { ...st.ist } });
+  }
+  function startRide(sample) {
+    if (!sample && !istReady()) return;     // the example ride needs no status quo of your own
+    if (!sample && !st.csv) { toast('📄 Choose a CSV file first – or try the sample data', 3200); return; }
+    takeName(); st.ist = readIst();
+    act({ action: 'ride', avatar: { ...st.cfg }, ist: { ...st.ist }, csv: sample ? null : st.csv, example: !!sample },
+        sample ? 'Loading the example data set' : 'Reading your data');
+  }
+  function downloadTemplate() {
+    const rows = ['month,net_transactions_chf,closing_cash_chf', '2027-01,850.00,15850.00', '2027-02,-320.50,15529.50', '2027-03,1210.00,16739.50'];
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
+    a.download = 'my-months-template.csv'; document.body.appendChild(a); a.click(); a.remove();
   }
 
   /* ---------------------------------------------------------------- play */
@@ -426,14 +490,11 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     const nw = num(h.net_worth);
     R.hud.innerHTML = `
       <div class="pill name"><span class="av" style="background:${avCol}">${esc(String(name).trim().charAt(0).toUpperCase() || '?')}</span>
-        <span class="big">${esc(name)}</span><span class="sub">· ${num(h.age, num(play.age))} J.</span></div>
-      <div class="pill style" title="Anlagestil (ab Station 2 unter Geld wählbar)"><span class="ico">📊</span><span class="sub">Anlagestil</span><span class="big">${esc(h.style_de || 'noch offen')}</span></div>
-      <div class="pill money" title="Nettovermögen"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
-      <div class="pill" title="Lebensfreude"><span class="ico">${esc(h.joy_emoji || '🙂')}</span><span class="big">${Math.round(num(h.joy))}</span></div>
-      <div class="pill" title="Erfolge"><span class="ico">🏆</span><span class="big">${num(h.achievements_got)}/${num(h.achievements_total)}</span></div>
+        <span class="big">${esc(name)}</span><span class="sub">· age ${num(h.age, num(play.age))}</span></div>
+      <div class="pill money" title="Net worth"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
       <div class="grow"></div>
-      <div class="pill station"><span class="big">Station ${clamp(turn + 1, 1, K)}/${K}</span>${h.state_de ? `<span class="sub">${esc(h.state_de)}</span>` : ''}</div>
-      <button class="btn-round sm blue" data-act="side" title="Ziele, Erfolge & Vermögen">📊</button>`;
+      <div class="pill station"><span class="big">Station ${clamp(turn + 1, 1, K)}/${K}</span>${h.state ? `<span class="sub">${esc(h.state)}</span>` : ''}</div>
+      <button class="btn-round sm blue" data-act="side" title="Goals, achievements & net worth">📊</button>`;
 
     // categories
     const cats = arr(play.categories);
@@ -444,7 +505,7 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     }
     if (!cats.some(c => c.key === st.selCat)) { const f = cats.find(c => num(c.open) > 0) || cats[0]; st.selCat = f ? f.key : null; }
     R.cats.innerHTML = cats.map((c, i) => `
-      <button class="mcard cat ${c.key === st.selCat ? 'sel' : ''}" data-act="selcat" data-k="${esc(c.key)}" style="--cc:${safeColor(c.color)}" title="${esc(c.label)} (Taste ${i + 1})">
+      <button class="mcard cat ${c.key === st.selCat ? 'sel' : ''}" data-act="selcat" data-k="${esc(c.key)}" style="--cc:${safeColor(c.color)}" title="${esc(c.label)} (key ${i + 1})">
         <span class="badge ${num(c.open) ? '' : 'zero'}">${num(c.open)}</span>
         <div class="mh">${esc(c.label)}</div><div class="mb"><div class="emo">${esc(c.emoji)}</div></div>
       </button>`).join('');
@@ -453,28 +514,27 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderTray() {
     const play = (st.P && st.P.play) || {};
     const cat = arr(play.categories).find(c => c.key === st.selCat);
-    const ageEnd = num(play.start_age, 20) + num(play.K, 15);
+    const ageEnd = num(play.end_age, num(play.start_age, 20) + num(play.K, 15));
     const cards = arr(play.cards).filter(c => c.cat === st.selCat).sort((a, b) => (a.locked ? 1 : 0) - (b.locked ? 1 : 0));
     R.trayHead.innerHTML = cat ? `<span class="tray-title ol">${esc(cat.emoji)} ${esc(cat.label)}</span>
-      <button class="btn-round sm" data-act="tray" title="Karten ein-/ausklappen">▾</button>` : '';
+      <button class="btn-round sm" data-act="tray" title="Show / hide cards">▾</button>` : '';
     const color = safeColor(cat && cat.color);
     R.trayRow.innerHTML = cards.length ? cards.map((c, i) => decisionCard(c, ageEnd, i, color)).join('')
-      : `<div class="tray-empty">Hier ist gerade nichts offen – wähle eine andere Kategorie oder fahr weiter.</div>`;
+      : `<div class="tray-empty">Nothing open here right now – pick another category or drive on.</div>`;
     R.tray.classList.toggle('hide', !st.trayOpen || !cat || st.busy);
   }
   function decisionCard(c, ageEnd, i, color) {
     const locked = !!c.locked;
     const chips = [];
-    if (num(c.joy)) chips.push(`<span class="chip2 ${num(c.joy) > 0 ? 'pos' : 'neg'}" title="Lebensfreude">😊 ${signed(c.joy)}</span>`);
-    if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Unterschied zu „nur weitergefahren“ mit ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
+    if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Difference to “just driving on” at ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
     if (c.credit !== undefined && c.credit !== null && Number.isFinite(+c.credit)) {
       const cr = Math.round(clamp(+c.credit, 0, 1) * 100);
-      chips.push(`<span class="chip2 ${cr >= 50 ? 'neg' : ''}" title="Wahrscheinlichkeit, einen Kredit zu brauchen">💳 ${cr} %</span>`);
+      chips.push(`<span class="chip2 ${cr >= 50 ? 'neg' : ''}" title="Chance of needing credit">💳 ${cr} %</span>`);
     }
-    const proj = (c.median !== undefined && c.median !== null) ? `<div class="proj">Mit ${ageEnd}: <b>${chf(c.median)}</b><br>Spanne ${chfShort(c.p5)} – ${kfmt(c.p95)}</div>` : '';
-    const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Noch gesperrt';
+    const proj = (c.median !== undefined && c.median !== null) ? `<div class="proj">At ${ageEnd}: <b>${chf(c.median)}</b><br>Range ${chfShort(c.p5)} – ${kfmt(c.p95)}</div>` : '';
+    const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Locked';
     const foot = locked ? `<div class="lockbox">🔒 ${esc(reason)}</div>`
-      : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>WÄHLEN</button>`;
+      : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>CHOOSE</button>`;
     return `<div class="dcard ${locked ? 'locked' : ''}" style="--rc:${color};animation-delay:${Math.min(i, 8) * 55}ms">
       <div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
       <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>
@@ -488,14 +548,11 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       const pct = Math.round(clamp(num(q.progress, num(q.target) ? num(q.current) / num(q.target) : 0), 0, 1) * 100);
       return `<div class="quest ${q.done ? 'done' : ''}"><div class="qt"><span>${q.done ? '✅ ' : ''}${esc(q.name)}</span><span>${pct} %</span></div>
         <div class="qbar"><i style="width:${pct}%"></i></div>
-        <div class="qs">${chf(q.current)} / ${chf(q.target)}${q.by_age !== undefined && q.by_age !== null ? ` · bis ${num(q.by_age)}` : ''}</div></div>`;
-    }).join('') : '<div class="qs">Keine Ziele aktiv.</div>';
-    const achs = arr(play.achievements);
-    R.achn.textContent = `${achs.filter(a => a.got).length}/${achs.length}`;
-    R.achs.innerHTML = achs.map(a => `<div class="ach ${a.got ? '' : 'off'}" data-t="${esc(a.title)}" title="${esc(a.title)}">${esc(a.emoji || '🏅')}</div>`).join('');
+        <div class="qs">${chf(q.current)} / ${chf(q.target)}${q.by_age !== undefined && q.by_age !== null ? ` · by ${num(q.by_age)}` : ''}</div></div>`;
+    }).join('') : '<div class="qs">No active goals.</div>';
     const hist = arr(play.history);
     R.histH.style.display = hist.length ? '' : 'none';
-    R.hist.innerHTML = hist.map(x => `<span title="${esc(`${num(x.age)} J. · ${x.title || ''}`)}">${esc(x.emoji || '•')}</span>`).join('');
+    R.hist.innerHTML = hist.map(x => `<span title="${esc(`age ${num(x.age)} · ${x.title || ''}`)}">${esc(x.emoji || '•')}</span>`).join('');
     if (play.fan) requestAnimationFrame(() => drawFan(R.fanPlay, play.fan, { small: true }));
   }
 
@@ -503,44 +560,76 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
   function renderSummary() {
     const end = (st.P && st.P.end) || {}, s = end.summary || {};
     const stars = clamp(Math.round(num(s.stars)), 0, 5);
-    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · Leben bis ${num(s.age_end)}`;
+    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · life up to ${num(s.age_end)}`;
     R.resStats.innerHTML = `
-      <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">Punkte</div></div>
-      <div class="stat"><div class="k">Sterne</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} von 5</div></div>
-      <div class="stat"><div class="k">Lebensfreude</div><div class="v">${esc(s.joy_emoji || '🙂')} ${Math.round(num(s.joy))}</div><div class="s">von 100</div></div>
-      <div class="stat"><div class="k">Anlagestil</div><div class="v">📊</div><div class="s">${esc(s.style_de || 'nie festgelegt')}</div></div>`;
+      <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">k CHF at ${num(s.age_end)}</div></div>
+      <div class="stat"><div class="k">Stars</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} of 5</div></div>
+      <div class="stat"><div class="k">Percentile</div><div class="v">${Math.round(num(s.percentile))}.</div><div class="s">of all possible lives</div></div>
+      <div class="stat"><div class="k">Decisions</div><div class="v">${num(s.decisions)}</div><div class="s">💡 tips in the analysis</div></div>`;
     const ch = arr(s.choices);
     R.resList.innerHTML = ch.length ? ch.map((c, i) => {
       const d = c.delta === undefined || c.delta === null ? null : num(c.delta);
       return `<div class="rrow" style="animation-delay:${Math.min(i, 14) * 70}ms">
-        <span class="age">${num(c.age)} J.</span><span class="e">${esc(c.emoji || '🃏')}</span>
+        <span class="age">age ${num(c.age)}</span><span class="e">${esc(c.emoji || '🃏')}</span>
         <div class="tt"><b>${esc(c.title)}</b><span>${esc(c.cat_label || '')}</span></div>
-        <div class="reward ${d !== null && d < 0 ? 'lg' : ''}" title="Unterschied zu „nur weitergefahren“ (Median, Zeitpunkt der Entscheidung)">${d === null ? '–' : '💰 ' + chfShortSigned(d)}</div></div>`;
-    }).join('') : '<div class="res-empty">Du bist einfach immer weitergefahren. Auch das ist eine Strategie! 🚗</div>';
+        <div class="reward ${d !== null && d < 0 ? 'lg' : ''}" title="Difference to “just driving on” (median, at the time of the decision)">${d === null ? '–' : '💰 ' + chfShortSigned(d)}</div></div>`;
+    }).join('') : '<div class="res-empty">You just kept driving on. That is a strategy too! 🚗</div>';
   }
   function renderFacts() {
     const end = (st.P && st.P.end) || {}, f = end.facts || {}, s = end.summary || {};
     const nw = num(f.net_worth), lazy = num(f.lazy_median), diff = nw - lazy, best = f.best || null;
     const tile = (k, v, sub = '', cls = '') => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
     R.factsTiles.innerHTML = [
-      tile('💰 Nettovermögen', chf(nw), `mit ${num(s.age_end) || num(arr((f.fan || {}).ages).slice(-1)[0])} Jahren`, 'hero'),
-      tile('🚗 vs. nur weitergefahren', chfSigned(diff), `nur weitergefahren: ${chf(lazy)}`, diff >= 0 ? 'good' : 'bad'),
-      tile('📏 Spanne p5–p95', `${kfmt(f.p5)} – ${kfmt(f.p95)}`, '90 % der simulierten Leben'),
+      tile('💰 Net worth', chf(nw), `at age ${num(s.age_end) || num(arr((f.fan || {}).ages).slice(-1)[0])}`, 'hero'),
+      tile('🚗 vs. just driving on', chfSigned(diff), `just driving on: ${chf(lazy)}`, diff >= 0 ? 'good' : 'bad'),
+      tile('📏 Range p5–p95', `${kfmt(f.p5)} – ${kfmt(f.p95)}`, '90 % of the simulated lives'),
       tile('💵 Cash', chf(f.cash)),
       tile('📈 Portfolio', chf(f.portfolio)),
-      tile('🏡 Wohneigentum', chf(f.house_equity)),
-      tile('🧾 Schulden', chf(f.debt), '', num(f.debt) > 0 ? 'bad' : ''),
-      tile('💳 Höchster Kredit', chf(f.max_credit)),
-      tile('📅 Monate mit Kredit', grp(f.months_with_credit), num(f.months_with_credit) ? 'Monate im Minus' : 'nie im Minus 🎉'),
-      tile('🃏 Entscheidungen', grp(f.decisions)),
-      tile('🌟 Beste Entscheidung', best ? esc(best.title) : '–', best ? chfSigned(best.delta) : '', 'good'),
+      tile('🏡 Home equity', chf(f.house_equity)),
+      tile('🧾 Debt', chf(f.debt), '', num(f.debt) > 0 ? 'bad' : ''),
+      tile('💳 Highest credit', chf(f.max_credit)),
+      tile('📅 Months with credit', grp(f.months_with_credit), num(f.months_with_credit) ? 'months in the red' : 'never in the red 🎉'),
+      tile('🃏 Decisions', grp(f.decisions)),
+      tile('🌟 Best decision', best ? esc(best.title) : '–', best ? chfSigned(best.delta) : '', 'good'),
     ].join('');
     const pct = clamp(Math.round(num(f.percentile)), 0, 100);
-    R.gauge.innerHTML = `${gaugeSvg(pct)}<div><div class="k">🏁 Perzentil</div><div class="gv">${pct}.</div>
-      <div class="gs">Besser als ${pct} % der simulierten Leben</div></div>`;
-    R.disclaimer.textContent = f.disclaimer || 'Synthetische Daten · keine Prognose · keine Anlageberatung';
+    R.gauge.innerHTML = `${gaugeSvg(pct)}<div><div class="k">🏁 Percentile</div><div class="gv">${pct}.</div>
+      <div class="gs">Better than ${pct} % of the simulated lives</div></div>`;
+    R.disclaimer.textContent = f.disclaimer || 'Synthetic data · not a forecast · not investment advice';
     drawFan(R.fanEnd, f.fan || null, { lazy: true });
   }
+
+  /* ---------------------------------------------------------------- intro (engine drives the timing) */
+  function intro(step, data = {}) {
+    const later = (ms, fn) => st.introTimers.push(setTimeout(fn, ms));
+    const clear = () => { st.introTimers.forEach(clearTimeout); st.introTimers = []; };
+    if (step === 'title') {
+      clear(); st.intro = true; root.classList.add('intro-on'); R.intro.className = 'intro on s-title';
+      const play = (st.P && st.P.play) || {}, name = ((play.hud || {}).name || st.cfg.name || 'Alex').toUpperCase();
+      const from = num(data.from, num(play.start_age, 20)), to = num(data.to, num(play.end_age, from + num(play.K, 15)));
+      const step = Math.max(1, num(data.step, num(play.step, 1))), yrs = step === 1 ? 'one year' : `${step} years`;
+      R.ibName.textContent = `${name}'S LIFE`; R.ibAges.textContent = `AGE ${from} → ${to}`;
+      R.ibText.textContent = `${num(data.stations, 15)} stations · one choice every ${step === 1 ? 'year' : step + ' years'} · all the way to retirement!`;
+      R.ihList.innerHTML = [
+        ['🛣️', `Every station is ${yrs} of your life – from ${from} to retirement at ${to}.`],
+        ['🃏', 'Pick one card per station – or just drive on.'],
+        ['💰', `Each card previews your net worth at ${to}, its range and the credit risk.`],
+        ['📊', 'Savings above a 3-month buffer are invested balanced – compare other styles in the analysis.'],
+        ['🎯', 'Keep an eye on your goals and stay debt-free.'],
+      ].map(([e, t], i) => `<li style="animation-delay:${300 + i * 260}ms"><span>${e}</span>${esc(t)}</li>`).join('');
+    } else if (step === 'howto') {
+      R.intro.className = 'intro on s-howto';
+    } else if (step === 'countdown') {
+      R.intro.className = 'intro on s-count';
+      const show = (t, cls = '') => { R.count.textContent = t; R.count.className = cls; void R.count.offsetWidth; R.count.classList.add('pop'); };
+      show('READY?', 'small'); later(1300, () => show('3')); later(2000, () => show('2')); later(2700, () => show('1'));
+      later(3400, () => show('GO!', 'go'));
+    } else if (step === 'end') {
+      clear(); st.intro = false; R.intro.className = 'intro'; root.classList.remove('intro-on');
+      if (st.screen === 'play') renderPlay();
+    }
+  }
+  function skipIntro() { if (st.intro && onSkipIntro) onSkipIntro(); }
 
   /* ---------------------------------------------------------------- toasts */
   const tq = []; let tRunning = false;
@@ -556,28 +645,36 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); nextToast(); }, 340); }, dur);
   }
 
-  /* ---------------------------------------------------------------- celebration */
-  function queueCelebration() {
-    const p = st.P, list = arr(p && p.play && p.play.new_achievements);
-    if (!list.length || st.celebrated.has(p.seq)) return;
-    st.celebrated.add(p.seq); st.celPending = list;
-    setTimeout(() => showCelebration(false), 700);     // waits for the engine if an animation is running
-    setTimeout(() => showCelebration(true), 15000);    // safety if busy never ends
+  /* ---------------------------------------------------------------- film ride (engine drives the timing) */
+  function renderRideStart() {
+    const r = (st.P && st.P.ride) || {}, sts = arr(r.stations);
+    R.rideV.textContent = sts.length ? `${sts[0].label} → ${sts[sts.length - 1].label} · ${r.source || ''}` : '';
+    R.rcDots.innerHTML = sts.map((_, i) => `<i data-i="${i}"></i>`).join('');
+    R.rideCap.classList.remove('on'); R.rideEnd.classList.remove('on'); root.classList.remove('ride-done');
   }
-  function showCelebration(force = false) {
-    const list = st.celPending; if (!list) return;
-    if (st.screen !== 'play') { st.celPending = null; return; }
-    if (st.busy && !force) return;                     // setBusy(false) calls us again
-    st.celPending = null;
-    R.celList.innerHTML = list.map((a, i) => `<div class="cel-item" style="animation-delay:${200 + i * 120}ms"><span class="e">${esc(a.emoji || '🏅')}</span>
-      <span class="t">${esc(a.title)}</span></div>`).join('');
-    const cols = ['#ff3d8b', '#ffd23f', '#2fd27a', '#2f7bff', '#ff8a1f', '#a24bff', '#ffffff'];
-    R.confetti.innerHTML = Array.from({ length: 70 }, (_, i) =>
-      `<i style="--x:${(Math.random() * 100).toFixed(1)}%;--c:${cols[i % cols.length]};--d:${(2.2 + Math.random() * 2).toFixed(2)}s;--s:${(-Math.random() * 3).toFixed(2)}s;--r:${Math.round(360 + Math.random() * 720)}deg"></i>`).join('');
-    R.cel.classList.add('on');
-    clearTimeout(st.celTimer); st.celTimer = setTimeout(closeCelebration, 7000);
+  function rideEvent(step, data = {}) {
+    const r = (st.P && st.P.ride) || {}, sts = arr(r.stations);
+    if (step === 'station') {
+      const i = num(data.i), x = sts[i]; if (!x) return;
+      R.rcLabel.textContent = `Station ${i + 1}/${sts.length} · ${x.label}`;
+      R.rcFlow.innerHTML = `Net flow <b class="${num(x.flow) < 0 ? 'neg' : 'pos'}">${chfSigned(x.flow)}</b>`;
+      R.rcBal.innerHTML = `Account <b>${chf(x.balance)}</b>`;
+      R.rcNote.textContent = x.note || ''; R.rcNote.style.display = x.note ? '' : 'none';
+      R.rcDots.querySelectorAll('i').forEach((d, j) => d.classList.toggle('on', j <= i));
+      R.rideCap.classList.remove('on'); void R.rideCap.offsetWidth; R.rideCap.classList.add('on');
+    } else if (step === 'end') {
+      R.rideCap.classList.remove('on'); root.classList.add('ride-done');
+      const b = r.before || {}, a = r.after || {};
+      R.rideSub.textContent = `${r.name || st.cfg.name || 'You'} · ${num(r.months)} months of ${r.source || 'data'}`;
+      const kpi = (k, from, to, fmt = chf) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(to)}</div><div class="s">before: ${fmt(from)}</div></div>`;
+      R.rideKpis.innerHTML = kpi('Typical month', r.typical_before, r.typical_after, chfSigned)
+        + kpi(`Net worth at ${num(a.alter_ende)}`, b.median_ende, a.median_ende)
+        + kpi('Chance of credit', b.p_kredit, a.p_kredit, v => Math.round(num(v) * 100) + ' %');
+      R.rideSt.innerHTML = arr(r.statements).map((t, i) => `<li style="animation-delay:${150 + i * 110}ms">${esc(t)}</li>`).join('');
+      R.rideEnd.classList.add('on');
+    }
   }
-  function closeCelebration() { clearTimeout(st.celTimer); R.cel.classList.remove('on'); setTimeout(() => { if (!R.cel.classList.contains('on')) R.confetti.innerHTML = ''; }, 400); }
+  function skipRide() { if (st.screen === 'ride' && onSkipIntro) onSkipIntro(); }
 
   /* ---------------------------------------------------------------- busy / waiting */
   function engineBusy() { return st.busy && performance.now() - st.busySince < 40000; }
@@ -593,20 +690,20 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (st.screen === 'play') R.tray.classList.toggle('hide', !st.trayOpen || b || !st.selCat);
     updateLocks();
     if (b) setTimeout(updateLocks, 40500);
-    if (!b && st.celPending) setTimeout(() => showCelebration(false), 350);
   }
   function setWaiting(on, label) {
     st.waiting = !!on; root.classList.toggle('waiting', st.waiting); clearTimeout(st.waitTimer);
     if (st.waiting) {
       st.waitSeq = st.P ? num(st.P.seq, -1) : -1; st.waitPhase = st.P ? st.P.phase : null;
       R.waitLabel.textContent = label || WAIT_TXT[Math.floor(Math.random() * WAIT_TXT.length)];
-      st.waitTimer = setTimeout(() => { if (st.waiting) { setWaiting(false); toast('⏳ Keine Antwort – bitte nochmal versuchen', 3200); } }, 25000);
+      st.waitTimer = setTimeout(() => { if (st.waiting) { setWaiting(false); toast('⏳ No answer – please try again', 3200); } }, 25000);
     }
     updateLocks();
   }
   function act(value, label) {
     if (st.waiting) return;
-    const labels = { start: 'Dein Leben wird vorbereitet', restart: 'Ein neues Leben wartet', analyse: 'Analyse wird geöffnet' };
+    const labels = { start: 'Preparing your life', restart: 'A new life is waiting', analyse: 'Opening the analysis',
+                     ride: 'Reading your data', ride_play: 'Starting your updated life' };
     setWaiting(true, label || labels[value.action]);
     try { send(value); } catch (e) { console.warn('[game] send failed', e); setWaiting(false); }
   }
@@ -625,10 +722,15 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       case 'pip': setOpt(+b.dataset.i); break;
       case 'rand': randomize(); break;
       case 'ex': {
-        const pr = arr(st.P && st.P.boot && st.P.boot.profiles).find(p => p.id === b.dataset.id);
-        if (pr && pr.ist) { st.ist = { ...pr.ist }; fillIst(); renderStartPanel(); }
+        const ex = st.P && st.P.boot && st.P.boot.example;
+        if (ex && ex.ist) { st.ist = { ...ex.ist }; fillIst(); renderStartPanel(); toast(`📋 Example data loaded (${ex.name}) – adjust it as you like`, 2600); }
         break;
       }
+      case 'ride': startRide(false); break;
+      case 'rideSample': startRide(true); break;
+      case 'ridePlay': act({ action: 'ride_play' }, 'Starting your updated life'); break;
+      case 'rideSkip': skipRide(); break;
+      case 'template': ev.preventDefault(); downloadTemplate(); break;
       case 'start': startGame(); break;
       case 'selcat':
         if (st.selCat === b.dataset.k) st.trayOpen = !st.trayOpen; else { st.selCat = b.dataset.k; st.trayOpen = true; }
@@ -641,18 +743,28 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
       case 'toFacts': go('facts'); break;
       case 'toSummary': go('summary'); break;
       case 'restart': act({ action: 'restart' }); break;
-      case 'celClose': closeCelebration(); break;
+      case 'skipIntro': skipIntro(); break;
     }
   });
   R.name.addEventListener('input', () => { st.cfg = { ...st.cfg, name: R.name.value.slice(0, 16) }; st.touched = true; });
   R.name.addEventListener('keydown', ev => { if (ev.key === 'Enter') R.name.blur(); });
+  R.csvIn.addEventListener('change', () => {
+    const f = R.csvIn.files && R.csvIn.files[0]; st.csv = null; st.csvName = '';
+    if (!f) { R.csvName.textContent = 'no file chosen'; return; }
+    if (f.size > 400000) { toast('📄 That file is too large (max. 400 KB)', 3200); R.csvIn.value = ''; return; }
+    const rd = new FileReader();
+    rd.onload = () => { st.csv = String(rd.result || ''); st.csvName = f.name; R.csvName.textContent = `✅ ${f.name}`; };
+    rd.onerror = () => toast('📄 Could not read the file', 3000);
+    rd.readAsText(f);
+  });
   R.istForm.addEventListener('input', ev => {
     const el = ev.target.closest('[data-ist]'); if (!el) return;
     st.ist = readIst();
   });
   window.addEventListener('keydown', ev => {
     if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
-    if (R.cel.classList.contains('on') && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { closeCelebration(); ev.preventDefault(); return; }
+    if (st.intro && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { skipIntro(); ev.preventDefault(); return; }
+    if (st.screen === 'ride' && !root.classList.contains('ride-done') && (ev.key === ' ' || ev.key === 'Escape')) { skipRide(); ev.preventDefault(); return; }
     if (st.screen === 'title' && ev.key === 'Enter') { go('creator'); ev.preventDefault(); }
     else if (st.screen === 'creator') {
       if (ev.key === 'ArrowLeft') { stepOpt(-1); ev.preventDefault(); }
@@ -673,9 +785,10 @@ export function createUI(root, { send, engineOk = true, standalone = false } = {
     if (sig === st.sig) return;
     st.sig = sig; st.P = p;
     if (st.waiting && (num(p.seq, -1) > st.waitSeq || p.phase !== st.waitPhase)) setWaiting(false);
+    if (p.error) setTimeout(() => toast('⚠️ ' + p.error, 5000), 300);
     if (p.avatar && typeof p.avatar === 'object' && !st.touched) st.cfg = { ...DEFAULT_CFG, ...p.avatar };
     if (st.loaded) route();
   }
   startLoading();
-  return { render, toast, setBusy, setWaiting, get screen() { return st.screen; } };
+  return { render, toast, setBusy, setWaiting, intro, rideEvent, get screen() { return st.screen; } };
 }
