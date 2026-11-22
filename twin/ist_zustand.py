@@ -18,7 +18,7 @@ from dataclasses import replace
 import numpy as np
 
 from .calibration import Calibration, Person
-from .config import OTHER, STATUS_TO_STATE
+from .config import OTHER, STATUS_TO_STATE, param_group
 
 # Situationen, die das Start-Formular anbietet (Schlüssel = employment_status der Challenge-Daten)
 STATUS_OPTIONS = {"student": "in education", "employed": "employed", "part_time": "part-time",
@@ -69,7 +69,7 @@ def person_from_ist(calib: Calibration, ist: dict | None, name: str | None = Non
         return replace(base, name=name or base.name)          # unverändertes Beispiel: kalibrierte Werte
 
     state = STATUS_TO_STATE.get(v["status"], OTHER)
-    sp = calib.states[state]
+    sp = calib.states.get(param_group(v["status"], state), calib.states[state])
     if base is not None and base.state == state and np.isfinite(base.sigma):
         sigma = base.sigma                                      # Schwankung des Beispiels übernehmen
     else:

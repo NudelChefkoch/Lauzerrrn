@@ -18,6 +18,12 @@ STATE_NAMES = {
     SELF_EMPLOYED: "self_employed",
     OTHER: "other",
 }
+# Parameter groups for the seasonal pattern a_{s,m} and the noise multiplier k_{s,m}: one per life state, plus
+# PART_TIME. Part-timers live in the EMPLOYED state (same game rules, job cards, ALV, random job loss) but use the
+# seasonality pooled over the part_time profiles (their December is about +115 CHF instead of the +2,431 of
+# full-time employees). Group keys are only used to look up ``Calibration.states``; plan states never take PART_TIME.
+PART_TIME = 5
+GROUP_NAMES = {**STATE_NAMES, PART_TIME: "part_time"}
 STATUS_TO_STATE = {
     "student": STUDENT,
     "employed": EMPLOYED,
@@ -26,6 +32,11 @@ STATUS_TO_STATE = {
     "self_employed": SELF_EMPLOYED,
     "retired": OTHER,
 }
+
+
+def param_group(status: str, state: int) -> int:
+    """Parameter group (key of ``Calibration.states``) of a person with this employment status in this state."""
+    return PART_TIME if status == "part_time" and state == EMPLOYED else state
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import STATUS_TO_STATE, STUDENT, EMPLOYED, UNEMPLOYED, SELF_EMPLOYED, OTHER
+from .config import STATUS_TO_STATE, STUDENT, EMPLOYED, UNEMPLOYED, SELF_EMPLOYED, OTHER, PART_TIME, param_group
 
 SPECIAL_MONTHS = (2, 8, 12)
 _DEFAULT_DIR = Path(__file__).resolve().parents[2] / "ai-financial-twin-lauzhack-2026" / "Data"
@@ -35,7 +35,8 @@ def data_dir() -> Path:
 
 @dataclass(frozen=True)
 class StateParams:
-    """Group-level parameters for one life state (used when a person switches state)."""
+    """Group-level parameters for one life state (used when a person switches state) or parameter group
+    (``config.PART_TIME``: seasonality / noise of part-time employees)."""
 
     seasonal: np.ndarray       # shape (12,), CHF, index 0 = January
     sigma_mult: np.ndarray     # shape (12,), multiplier on sigma
@@ -62,11 +63,16 @@ class Person:
     debt_rate: float
     goals: tuple[tuple[str, float, int], ...]  # (name, target CHF, months from start)
 
+    @property
+    def group(self) -> int:
+        """Key of ``Calibration.states`` for the person's own seasonality / noise (PART_TIME for part-timers)."""
+        return param_group(self.status, self.state)
+
 
 @dataclass(frozen=True)
 class Calibration:
     persons: dict[str, Person]
-    states: dict[int, StateParams]
+    states: dict[int, StateParams]     # life states + parameter group PART_TIME
     young_salary: float        # median net income of employed profiles aged <= 30
 
 
@@ -133,8 +139,10 @@ def calibrate() -> Calibration:
     prof["sigma"] = sigma
     states: dict[int, StateParams] = {}
     for state, status in [(STUDENT, "student"), (EMPLOYED, "employed"), (UNEMPLOYED, "unemployed"),
-                          (SELF_EMPLOYED, "self_employed"), (OTHER, "retired")]:
+                          (SELF_EMPLOYED, "self_employed"), (OTHER, "retired"), (PART_TIME, "part_time")]:
         grp = prof[prof.employment_status == status]
+        if grp.empty or status not in seasonal.index:
+            continue
         states[state] = StateParams(
             seasonal=seasonal.loc[status].to_numpy(dtype=float),
             sigma_mult=mult.loc[status].to_numpy(dtype=float),

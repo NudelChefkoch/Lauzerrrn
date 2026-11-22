@@ -141,6 +141,14 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
     d_mu = z_mu * se if (stochastic and a.macro.param_uncertainty and se > 0) else np.zeros(N)
     d_mu[0] = 0.0                                   # the played life keeps the point estimate
     state_path0 = np.full(T + 1, person.state)
+    own = person.group if person.group in calib.states else person.state
+
+    def params(s: int):
+        """(StateParams, base sigma) of state s: the person's own group and sigma in their own state."""
+        if s == person.state:
+            return calib.states[own], person.sigma
+        sp = calib.states[int(s)]
+        return sp, sp.sigma
     infl_m = (1 + a.macro.inflation) ** (1 / 12)
 
     for t in range(T):
@@ -183,17 +191,17 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
         spend = expenses * np.where(austerity, 1 - sh.spending_cut, 1.0)
 
         if not rand_unemp.any():                 # all paths in the planned state (fast path, same numbers)
-            sp = calib.states[int(s_plan)]
+            sp, sig0 = params(int(s_plan))
             seas = sp.seasonal[m]
-            sig = (person.sigma if s_plan == person.state else sp.sigma) * sp.sigma_mult[m]
+            sig = sig0 * sp.sigma_mult[m]
         else:
             seas = np.zeros(N)
             sig = np.zeros(N)
             for s in np.unique(state):
                 idx = state == s
-                sp = calib.states[int(s)]
+                sp, sig0 = params(int(s))
                 seas[idx] = sp.seasonal[m]
-                sig[idx] = (person.sigma if s == person.state else sp.sigma) * sp.sigma_mult[m]
+                sig[idx] = sig0 * sp.sigma_mult[m]
         dmu = d_mu if t >= fixed_until else 0.0     # shared past: path 0's flows (d_mu[0] = 0)
         flow = income - spend - plan.extra_cost[t] * P + (dmu + seas + sig * eps[t]) * P
         cash += flow

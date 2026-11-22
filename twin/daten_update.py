@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from .calibration import Calibration, Person, calibrate
-from .config import Assumptions, OTHER, STATUS_TO_STATE
+from .config import Assumptions, OTHER, STATUS_TO_STATE, param_group
 from .engine import MAX_YEARS, simulate
 
 GOAL_LABEL = {"Emergency savings": "Emergency fund", "Career transition": "Career-change cushion",
@@ -77,7 +77,7 @@ def nachkalibrieren(person: Person, df: pd.DataFrame, calib: Calibration) -> Per
     """Neue Person mit aktualisiertem mu/sigma und dem Stand am Ende der Daten."""
     status = str(df["employment_status"].iloc[-1]) if "employment_status" in df.columns else person.status
     state = STATUS_TO_STATE.get(status, person.state if status == person.status else OTHER)
-    sp = calib.states[state]
+    sp = calib.states.get(param_group(status, state), calib.states[state])
     m = df["m"].to_numpy() - 1
     x = df["net_transactions_chf"].to_numpy(dtype=float) - sp.seasonal[m]
     mult = np.where(np.isfinite(sp.sigma_mult[m]) & (sp.sigma_mult[m] > 0), sp.sigma_mult[m], 1.0)
@@ -187,7 +187,7 @@ def beispiel_daten(person: Person, calib: Calibration | None = None, months: int
     Used when the player wants to try the film ride without an own CSV. Same format as
     ``synthetic-cash-balances.csv`` (month, net_transactions_chf, closing_cash_chf)."""
     calib = calib or calibrate()
-    sp = calib.states[person.state]
+    sp = calib.states.get(person.group, calib.states[person.state])
     rng = np.random.default_rng(seed)
     idx = pd.period_range(start, periods=months, freq="M")
     m = np.array([p.month for p in idx]) - 1

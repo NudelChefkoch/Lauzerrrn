@@ -298,6 +298,8 @@ OPTIONS: list[Option] = [
            lambda c, p: None if c.snap.state == EMPLOYED else ("You are retired" if _retired(c) else "Only with a job"),
            once=False),
     Option("parttime", CATS[1], "⏳", "Part-time 80 %", "20 % less salary, more free time.",
+           # stays in the EMPLOYED state with the player's own seasonality: the card changes hours and pay, the
+           # December bonus pattern of the job is kept (only profiles that START part-time use the part_time group)
            lambda t, s, c, p: [JobChange(t, -0.20, 0, "Part-time")],
            lambda c, p: None if c.snap.state == EMPLOYED else ("You are retired" if _retired(c) else "Only with a job")),
     Option("retire", CATS[1], "🪑", "Retire", "AHV + pension fund: about 60 % of your last salary",
