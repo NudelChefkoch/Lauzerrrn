@@ -1,4 +1,4 @@
-// In-game UI: screens (Loading → Title → Creator → Play → Life summary → Financial facts), HUD, toasts, popups.
+// In-game UI: screens (Loading → Title → Creator → Play → Finale → Financial facts → life review), HUD, toasts.
 // Talks to the 3D engine via its public API (CONTRACT.md) and to Python via the `send` callback from main.js.
 import { showCreator, setCreator, showWorld } from './engine.js';
 import { OPTIONS, CAT_LABEL, NICE, DEFAULT_CFG, SKINS, HAIRC, COLORS } from './core.js';
@@ -30,7 +30,6 @@ function kfmt(v) {
   if (a >= 1e4) return s + Math.round(a / 1e3) + 'k';
   return s + grp(a);
 }
-const chfShort = v => 'CHF ' + kfmt(v);
 const chfShortSigned = v => (num(v) < -0.5 ? '−' : '+') + 'CHF ' + kfmt(Math.abs(num(v)));
 const signed = v => (num(v) > 0 ? '+' : num(v) < 0 ? '−' : '±') + Math.abs(Math.round(num(v)));
 const safeColor = (c, d = '#2f7bff') => (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c)) ? c : d;
@@ -78,6 +77,25 @@ function fmtParamShort(p, v) {
   return s + kfmt(Math.abs(num(v)));
 }
 const CATS = Object.keys(OPTIONS);
+// card effect on the net worth at the end, shown as ONE arrow (twin/game.py impact(); numbers only at the end)
+const IMPACT = {
+  up: { arrow: '▲', label: 'Better for your money' },
+  down: { arrow: '▼', label: 'Costs you money' },
+  flat: { arrow: '●', label: 'About the same' },
+};
+function cardImpact(c) {
+  if (c && IMPACT[c.impact]) return c.impact;
+  if (!c || c.delta === undefined || c.delta === null || !Number.isFinite(+c.delta)) return null;   // older payloads
+  const d = +c.delta, base = Math.abs(num(c.median) - d);
+  if (Math.abs(d) < Math.min(.01 * base, 20000)) return 'flat';
+  return d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
+}
+// money-health badge of the "Where you stand" tile (hud.health)
+const HEALTH = {
+  ok: { dot: '🟢', label: 'Buffer OK', tip: 'Your cash covers at least 3 months of expenses and you owe nothing' },
+  thin: { dot: '🟡', label: 'Thin buffer', tip: 'Less than 3 months of expenses in cash – one surprise bill could push you into credit' },
+  credit: { dot: '🔴', label: 'On credit', tip: 'You are living on a loan right now – expensive interest eats your money' },
+};
 
 /* =================================================================== fan chart (canvas) */
 function niceTicks(lo, hi, count = 4) {
@@ -173,7 +191,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     screen: null, P: null, sig: null, loaded: false, cfg: { ...DEFAULT_CFG }, touched: false, cat: 'gender',
     ist: null, istBuilt: false, styleHinted: false, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
     busy: false, busySince: 0, waiting: false, waitSeq: -1, waitPhase: null, waitTimer: 0,
-    enginePhase: null, intro: false, introTimers: [], csv: null, csvName: '', ride: false,
+    enginePhase: null, intro: false, introTimers: [], finTimer: 0, finSince: 0,
     waitTurn: null, softTimer: 0, skipOpen: false, trayKey: '',
     // card params: local values the player is changing (key → {name: value}), revision counters, debounce timers
     lp: {}, lpRev: {}, lpSent: {}, pTimers: {}, updating: {}, quiet: [], dragging: false, trayDirty: false,
@@ -221,25 +239,12 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     <aside class="cr-panel pe">
       <div class="panel-head"><span class="ol">YOUR START</span></div>
       <div class="panel-body">
-        <h3 class="sec">1 · Your status quo</h3>
+        <h3 class="sec">Your status quo</h3>
         <p class="ist-note">Enter your own numbers as they are today. No numbers at hand? Load the example data set.</p>
         <div class="ist-ex"></div>
         <div class="ist-form"></div>
         <p class="ist-note">🛣️ Your road runs year by year from your age to <b class="ret-age">85</b> – retire whenever you
           like from 60 (at 70 at the latest). 📊 How to invest is compared later in the analysis – with tips for your data.</p>
-        <h3 class="sec">2 · Later: replay your real data</h3>
-        <p class="ist-note">Collected your real monthly numbers since then? Upload them as CSV – the twin updates its
-          statements and drives you through your months as a film ride. Or watch the example data set's recorded months.
-          The CSV is only your past net flow per month – future costs come from your status quo and your choices in the game.</p>
-        <div class="ride-box">
-          <label class="btn btn-sm btn-blue file-btn">📄 CHOOSE CSV<input type="file" class="csv-in" accept=".csv,text/csv"></label>
-          <span class="csv-name">no file chosen</span>
-          <div class="ride-row">
-            <button class="btn btn-sm btn-purple" data-act="rideSample" data-wlock title="Ride through the recorded months of the example data set">📋 EXAMPLE DATA RIDE</button>
-            <button class="btn btn-sm btn-green" data-act="ride" data-wlock title="Ride through the months of your CSV">🎬 MY DATA RIDE</button>
-          </div>
-          <a class="tpl-link" href="#" data-act="template">Download a CSV template</a>
-        </div>
       </div>
       <div class="panel-foot"><button class="btn btn-xl btn-pink w100" data-act="start" data-wlock>LET'S GO</button></div>
     </aside>
@@ -248,9 +253,8 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   <section class="screen scr-play" data-s="play">
     <header class="hud pe"></header>
     <aside class="side pe"><div class="side-inner">
+      <h3>📍 Where you stand</h3><div class="stand"></div>
       <h3>🎯 Goals</h3><div class="quests"></div>
-      <h3>📈 Your net worth</h3><div class="fanbox"><canvas class="fan-play"></canvas></div>
-      <div class="legend"><span><i style="border-color:#ff3d8b"></i>so far</span><span><i class="dash" style="border-color:#2f7bff"></i>Median</span><span><i class="band"></i>p5–p95</span></div>
       <h3 class="hist-h">🧭 Your stations</h3><div class="hist"></div>
     </div></aside>
     <div class="tray pe"><div class="tray-head"></div><div class="tray-row"></div></div>
@@ -266,15 +270,9 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     </footer>
   </section>
 
-  <section class="screen scr-summary" data-s="summary">
-    <div class="res-panel pe">
-      <div class="res-tag">RESULTS</div>
-      <h2 class="res-h ol">LIFE SUMMARY</h2>
-      <div class="res-sub"></div>
-      <div class="res-stats"></div>
-      <div class="res-list"></div>
-      <div class="res-foot"><button class="btn btn-lg btn-green" data-act="toFacts">NEXT ▶</button></div>
-    </div>
+  <section class="screen scr-finale" data-s="finale">
+    <div class="fin-tag pe"><span class="ol">🏁 THE FINISH LINE</span><small class="fin-sub"></small></div>
+    <button class="btn btn-sm btn-purple fin-skip pe" data-act="toFacts" title="Show your financial facts (Space)">RESULTS ▶▶</button>
   </section>
 
   <section class="screen scr-facts" data-s="facts">
@@ -291,11 +289,9 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
           </div>
         </div>
       </div>
-      <p class="disclaimer"></p>
       <div class="res-foot">
-        <button class="btn btn-sm btn-purple" data-act="toSummary">◀ BACK</button>
-        <button class="btn btn-lg btn-pink" data-act="restart" data-wlock>PLAY AGAIN</button>
-        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>💡 TIPS & ANALYSIS</button>
+        <button class="btn btn-lg btn-purple" data-act="restart" data-wlock>PLAY AGAIN</button>
+        <button class="btn btn-xl btn-pink btn-review" data-act="analyse" data-wlock title="Your timeline, what went well, what could be better – and your twin to talk to">YOUR LIFE REVIEW ▶</button>
       </div>
     </div>
   </section>
@@ -309,44 +305,23 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   </div>
   <div class="toasts"></div>
   <div class="waitbox"><div class="wcard"><span class="dice">🎲</span><span class="wtxt"><span class="wlabel"></span><span class="wdots"></span></span></div></div>
-  <section class="screen scr-ride" data-s="ride">
-    <div class="ride-title pe"><span class="rt-k">🎬 FILM RIDE</span><span class="rt-v"></span></div>
-    <div class="ride-cap"><div class="rc-label"></div><div class="rc-row"><span class="rc-flow"></span><span class="rc-bal"></span></div>
-      <div class="rc-note"></div><div class="rc-dots"></div></div>
-    <button class="btn btn-sm btn-purple ride-skip pe" data-act="rideSkip" title="Skip to the result (Space)">SKIP ▶▶</button>
-    <div class="ride-end pe">
-      <div class="res-tag">UPDATED</div>
-      <h2 class="res-h ol">WHAT YOUR DATA SAYS</h2>
-      <div class="res-sub ride-sub"></div>
-      <div class="ride-kpis"></div>
-      <ul class="ride-statements"></ul>
-      <p class="disclaimer">Synthetic model · not a forecast · not investment advice</p>
-      <div class="res-foot">
-        <button class="btn btn-sm btn-purple" data-act="restart" data-wlock>◀ BACK</button>
-        <button class="btn btn-lg btn-blue" data-act="analyse" data-wlock>💡 TIPS IN THE ANALYSIS</button>
-        <button class="btn btn-lg btn-pink" data-act="ridePlay" data-wlock>PLAY WITH UPDATED DATA</button>
-      </div>
-    </div>
-  </section>`;
+`;
 
   const $ = s => root.querySelector(s);
   const screens = {}; root.querySelectorAll('.screen').forEach(el => { screens[el.dataset.s] = el; });
   const R = {
     loadBar: $('.loadbar i'), loadPct: $('.load-pct'), tip: $('.tip'), tipTxt: $('.tip span'),
     chips: $('.chips'), plateCat: $('.plate-cat'), plateVal: $('.plate-val'), pips: $('.pips'), name: $('#ylyc-name'),
-    istEx: $('.ist-ex'), istForm: $('.ist-form'), csvIn: $('.csv-in'), csvName: $('.csv-name'), retAge: $('.ret-age'),
-    rideV: $('.rt-v'), rideCap: $('.ride-cap'), rcLabel: $('.rc-label'), rcFlow: $('.rc-flow'), rcBal: $('.rc-bal'), rcNote: $('.rc-note'),
-    rcDots: $('.rc-dots'), rideEnd: $('.ride-end'), rideSub: $('.ride-sub'), rideKpis: $('.ride-kpis'), rideSt: $('.ride-statements'),
-    hud: $('.hud'), side: $('.side'), quests: $('.quests'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
+    istEx: $('.ist-ex'), istForm: $('.ist-form'), retAge: $('.ret-age'),
+    hud: $('.hud'), side: $('.side'), stand: $('.stand'), quests: $('.quests'), hist: $('.hist'), histH: $('.hist-h'),
     tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'),
     skipBox: $('.skipbox'), skipBtn: $('.btn-skip'), skipMenu: $('.skipmenu'), busyPill: $('.busy-pill'),
-    resSub: $('.res-sub'), resStats: $('.res-stats'), resList: $('.res-list'),
-    factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'), disclaimer: $('.disclaimer'),
+    finSub: $('.fin-sub'), factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'),
     intro: $('.intro'), ibName: $('.ib-name'), ibAges: $('.ib-ages'), ibText: $('.ib-text'), ihList: $('.ih-list'),
     count: $('.intro-count span'),
     toasts: $('.toasts'), waitLabel: $('.wlabel'),
   };
-  if (fanRO) { fanRO.observe(R.fanPlay); fanRO.observe(R.fanEnd); }
+  if (fanRO) fanRO.observe(R.fanEnd);
 
   /* ---------------------------------------------------------------- screens */
   function go(name) {
@@ -359,7 +334,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     }
     if (name === 'creator') renderCreator();
     if (name === 'facts') requestAnimationFrame(() => drawFan(R.fanEnd, R.fanEnd._fan, R.fanEnd._opt));
-    if (name === 'play') requestAnimationFrame(() => drawFan(R.fanPlay, R.fanPlay._fan, R.fanPlay._opt));
+    if (name !== 'finale') clearTimeout(st.finTimer);
     if (name !== 'play') { root.classList.remove('play-busy'); if (st.intro) intro('end'); }
     updateLocks();
   }
@@ -371,19 +346,16 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       st.enginePhase = 'play';
       E(showWorld, p.play.world || {}, { reset });
       go('play'); renderPlay();
-    } else if (phase === 'ride' && p.ride) {
-      st.enginePhase = 'ride'; st.ride = true;
-      E(showWorld, p.ride.world || {}, { reset: true });
-      go('ride'); renderRideStart();
-      if (!engineOk) rideEvent('end');
     } else if (phase === 'end' && p.end) {
+      // end of life: the retirement finale plays on the island, then the financial facts (no life summary screen)
       const reset = st.enginePhase === 'boot';
       st.enginePhase = 'end';
       E(showWorld, p.end.world || {}, { reset });
-      if (st.screen !== 'facts') go('summary');
-      renderSummary(); renderFacts();
+      renderFacts();
+      if (st.screen !== 'facts' && st.screen !== 'finale') startFinale();
     } else {
-      st.enginePhase = 'boot'; st.styleHinted = false; st.ride = false;
+      // boot (also an old "ride" phase: the film ride has no entry in the game any more)
+      st.enginePhase = 'boot'; st.styleHinted = false;
       if (st.screen === 'loading' || !st.screen) go('title');
       else if (st.screen === 'title' || st.screen === 'creator') renderStartPanel();
       else go('creator');
@@ -503,19 +475,6 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     takeName(); st.ist = readIst(); st.styleHinted = false;
     act({ action: 'start', avatar: { ...st.cfg }, ist: { ...st.ist } });
   }
-  function startRide(sample) {
-    if (!sample && !istReady()) return;     // the example ride needs no status quo of your own
-    if (!sample && !st.csv) { toast('📄 Choose a CSV file first – or try the sample data', 3200); return; }
-    takeName(); st.ist = readIst();
-    act({ action: 'ride', avatar: { ...st.cfg }, ist: { ...st.ist }, csv: sample ? null : st.csv, example: !!sample },
-        sample ? 'Loading the example data set' : 'Reading your data');
-  }
-  function downloadTemplate() {
-    const rows = ['month,net_transactions_chf,closing_cash_chf', '2027-01,850.00,15850.00', '2027-02,-320.50,15529.50', '2027-03,1210.00,16739.50'];
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
-    a.download = 'my-months-template.csv'; document.body.appendChild(a); a.click(); a.remove();
-  }
-
   /* ---------------------------------------------------------------- play */
   function renderPlay() {
     const play = (st.P && st.P.play) || {};
@@ -535,7 +494,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       <div class="pill station" title="${esc(`Age ${age} · life runs to ${endAge}`)}"><span class="st-col">
         <span class="st-top"><span class="big">Station ${stNow}<small>/${K}</small></span>${h.state ? `<span class="sub">${esc(h.state)}</span>` : ''}</span>
         <i class="st-bar"><b style="width:${(stNow / Math.max(1, K) * 100).toFixed(1)}%"></b></i></span></div>
-      <button class="btn-round sm blue" data-act="side" title="Goals, net worth & your stations">📊</button>`;
+      <button class="btn-round sm blue" data-act="side" title="Where you stand, goals & your stations">📊</button>`;
 
     // categories
     const cats = arr(play.categories);
@@ -600,20 +559,17 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   }
   function decisionCard(c, ageEnd, i, color) {
     const locked = !!c.locked, hasP = paramList(c).length > 0, upd = !!st.updating[c.key];
-    const chips = [];
-    if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Difference to “just driving on” at ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
-    if (c.credit !== undefined && c.credit !== null && Number.isFinite(+c.credit)) {
-      const cr = Math.round(clamp(+c.credit, 0, 1) * 100);
-      chips.push(`<span class="chip2 ${cr >= 50 ? 'neg' : ''}" title="Chance of needing credit">💳 ${cr} %</span>`);
-    }
-    const proj = (c.median !== undefined && c.median !== null) ? `<div class="proj">At ${ageEnd}: <b>${chf(c.median)}</b><br>Range ${chfShort(c.p5)} – ${kfmt(c.p95)}</div>` : '';
+    // no numbers on the cards: ONE arrow for the effect on your net worth at the end (numbers come at the end)
+    const im = cardImpact(c), I = im && IMPACT[im];
+    const badge = I ? `<span class="imp-badge ${im}" role="img" aria-label="${esc(I.label)}" title="${esc(`${I.label} – your net worth at ${ageEnd} compared with just driving on`)}">${I.arrow}</span>` : '';
+    const words = I ? `<div class="imp-words ${im}">${esc(I.label)}</div>` : '';
     const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Locked';
     const foot = locked ? `<div class="lockbox">🔒 ${esc(reason)}</div>`
       : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>CHOOSE</button>`;
     return `<div class="dcard ${locked ? 'locked' : ''} ${hasP ? 'has-params' : ''} ${upd ? 'updating' : ''}" data-card="${esc(c.key)}" style="--rc:${color};animation-delay:${Math.min(i, 8) * 55}ms">
-      <div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
+      <div class="band"><span>${esc(c.emoji || '🃏')}</span>${badge}</div>
       <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>${paramBox(c)}
-      <div class="prev"><div class="chips2">${chips.join('')}</div>${proj}<span class="upd">updating …</span></div>${foot}</div>`;
+      <div class="prev">${words}<span class="upd">updating …</span></div>${foot}</div>`;
   }
   /* ---------------------------------------------------------------- card params (quiet updates, no wait screen) */
   function cardEl(k) { return [...R.trayRow.querySelectorAll('.dcard[data-card]')].find(el => el.dataset.card === k) || null; }
@@ -698,32 +654,49 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     R.histH.style.display = hist.length ? '' : 'none';
     R.hist.innerHTML = hist.map(x => `<span class="hi" title="${esc(`age ${num(x.age)} · ${x.title || ''}`)}"><em>${esc(x.emoji || '•')}</em><small>${num(x.age)}</small></span>`).join('');
     R.hist.scrollTop = R.hist.scrollHeight;
-    if (play.fan) requestAnimationFrame(() => drawFan(R.fanPlay, play.fan, { small: true }));
+    renderStand(play.hud || {});
+  }
+  // "Where you stand": net worth today, change since the last stop (arrow), money-health badge. No forecast.
+  function renderStand(h) {
+    const nw = num(h.net_worth), hasPrev = h.net_worth_prev !== undefined && h.net_worth_prev !== null && Number.isFinite(+h.net_worth_prev);
+    const d = hasPrev ? nw - num(h.net_worth_prev) : 0, dir = !hasPrev ? null : d > 0.5 ? 'up' : d < -0.5 ? 'down' : 'flat';
+    const since = h.prev_age !== undefined && h.prev_age !== null ? `since age ${num(h.prev_age)}` : 'since the last station';
+    const H = HEALTH[h.health] || null, exp = num(h.expenses);
+    const tip = H ? `${H.tip}${exp > 0 ? ` (3 months = ${chf(3 * exp)})` : ''}` : '';
+    R.stand.innerHTML = `
+      <div class="stand-k">Net worth today</div>
+      <div class="stand-v ${nw < 0 ? 'neg' : ''}">${chf(nw)}</div>
+      <div class="stand-d ${dir || 'none'}">${dir ? `<b class="imp-dot ${dir}" aria-hidden="true">${IMPACT[dir].arrow}</b><span>${dir === 'flat' ? 'about the same' : chfShortSigned(d)} <small>${esc(since)}</small></span>`
+        : '<span>Your first station – off you go!</span>'}</div>
+      ${H ? `<div class="health ${esc(h.health)}" title="${esc(tip)}"><i aria-hidden="true">${H.dot}</i><span>${esc(H.label)}</span></div>` : ''}`;
   }
 
-  /* ---------------------------------------------------------------- end: summary + facts */
-  function renderSummary() {
+  /* ---------------------------------------------------------------- end: retirement finale → financial facts */
+  // the engine plays the finale (drive to the last station + rocking chair); when it is done → FINANCIAL FACTS.
+  function startFinale() {
     const end = (st.P && st.P.end) || {}, s = end.summary || {};
-    const stars = clamp(Math.round(num(s.stars)), 0, 5);
-    R.resSub.textContent = `${s.name || st.cfg.name || 'Alex'} · life up to ${num(s.age_end)}`;
-    R.resStats.innerHTML = `
-      <div class="stat"><div class="k">Score</div><div class="v">${grp(s.score)}</div><div class="s">k CHF at ${num(s.age_end)}</div></div>
-      <div class="stat"><div class="k">Stars</div><div class="v stars">${'★'.repeat(stars)}<span class="off">${'★'.repeat(5 - stars)}</span></div><div class="s">${stars} of 5</div></div>
-      <div class="stat"><div class="k">Percentile</div><div class="v">${Math.round(num(s.percentile))}.</div><div class="s">of all possible lives</div></div>
-      <div class="stat"><div class="k">Decisions</div><div class="v">${num(s.decisions)}</div><div class="s">💡 tips in the analysis</div></div>`;
-    const ch = arr(s.choices);
-    R.resList.innerHTML = ch.length ? ch.map((c, i) => {
-      const d = c.delta === undefined || c.delta === null ? null : num(c.delta);
-      return `<div class="rrow" style="animation-delay:${Math.min(i, 14) * 70}ms">
-        <span class="age">age ${num(c.age)}</span><span class="e">${esc(c.emoji || '🃏')}</span>
-        <div class="tt"><b>${esc(c.title)}</b><span>${esc(c.cat_label || '')}</span></div>
-        <div class="reward ${d !== null && d < 0 ? 'lg' : ''}" title="Difference to “just driving on” (median, at the time of the decision)">${d === null ? '–' : '💰 ' + chfShortSigned(d)}</div></div>`;
-    }).join('') : '<div class="res-empty">You just kept driving on. That is a strategy too! 🚗</div>';
+    R.finSub.textContent = `${s.name || st.cfg.name || 'Alex'} · life up to ${num(s.age_end, 85)}`;
+    go('finale');
+    if (!engineOk) { go('facts'); return; }
+    st.finSince = performance.now();
+    finaleCheck(2600);
+  }
+  function finaleCheck(ms) {
+    clearTimeout(st.finTimer);
+    st.finTimer = setTimeout(() => {
+      if (st.screen !== 'finale') return;
+      const el = performance.now() - st.finSince;
+      if (engineBusy() && el < 30000) { finaleCheck(800); return; }   // still driving / rocking: wait
+      go('facts');
+    }, ms);
   }
   function renderFacts() {
     const end = (st.P && st.P.end) || {}, f = end.facts || {}, s = end.summary || {};
     const nw = num(f.net_worth), lazy = num(f.lazy_median), diff = nw - lazy, best = f.best || null;
-    const tile = (k, v, sub = '', cls = '') => `<div class="tile ${cls}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+    // long values (CHF 19'457'412) get a smaller font instead of being cut off
+    const tile = (k, v, sub = '', cls = '') => { const long = String(v).replace(/<[^>]*>/g, '').length > 12 ? ' long' : '';
+      return `<div class="tile ${cls}"><div class="k">${k}</div><div class="v${long}">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`; };
+    const bestUp = best && num(best.delta) > 0.5;          // "best" only if a choice actually raised the net worth
     R.factsTiles.innerHTML = [
       tile('💰 Net worth', chf(nw), `at age ${num(s.age_end) || num(arr((f.fan || {}).ages).slice(-1)[0])}`, 'hero'),
       tile('🚗 vs. just driving on', chfSigned(diff), `just driving on: ${chf(lazy)}`, diff >= 0 ? 'good' : 'bad'),
@@ -735,12 +708,12 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       tile('💳 Highest credit', chf(f.max_credit)),
       tile('📅 Months with credit', grp(f.months_with_credit), num(f.months_with_credit) ? 'months in the red' : 'never in the red 🎉'),
       tile('🃏 Decisions', grp(f.decisions)),
-      tile('🌟 Best decision', best ? esc(best.title) : '–', best ? chfSigned(best.delta) : '', 'good'),
+      bestUp ? tile('🌟 Best decision', esc(best.title), chfSigned(best.delta), 'good')
+             : tile('🌟 Best decision', '–', best ? 'none of your choices raised your net worth' : 'no choices made'),
     ].join('');
     const pct = clamp(Math.round(num(f.percentile)), 0, 100);
     R.gauge.innerHTML = `${gaugeSvg(pct)}<div><div class="k">🏁 Percentile</div><div class="gv">${pct}.</div>
       <div class="gs">Better than ${pct} % of the simulated lives</div></div>`;
-    R.disclaimer.textContent = f.disclaimer || 'Synthetic data · not a forecast · not investment advice';
     drawFan(R.fanEnd, f.fan || null, { lazy: true });
   }
 
@@ -759,7 +732,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
         ['🛣️', `Every station is ${yrs} of your life – from ${from} to ${to}.`],
         ['🃏', 'Pick one card per station – or just drive on. SKIP ▶▶ fast-forwards several years.'],
         ['🎚️', 'Some cards have sliders: the price of a home, the cost of a child, your monthly budget.'],
-        ['💰', `Each card previews your net worth at ${to}, its range and the credit risk.`],
+        ['⬆️', `A green ▲ on a card means more money for you at ${to}, a red ▼ costs you money. The numbers come at the end.`],
         ['🪑', 'Retire whenever you like from 60 – at 70 at the latest.'],
       ].map(([e, t], i) => `<li style="animation-delay:${300 + i * 260}ms"><span>${e}</span>${esc(t)}</li>`).join('');
     } else if (step === 'howto') {
@@ -790,37 +763,6 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); nextToast(); }, 340); }, dur);
   }
 
-  /* ---------------------------------------------------------------- film ride (engine drives the timing) */
-  function renderRideStart() {
-    const r = (st.P && st.P.ride) || {}, sts = arr(r.stations);
-    R.rideV.textContent = sts.length ? `${sts[0].label} → ${sts[sts.length - 1].label} · ${r.source || ''}` : '';
-    R.rcDots.innerHTML = sts.map((_, i) => `<i data-i="${i}"></i>`).join('');
-    R.rideCap.classList.remove('on'); R.rideEnd.classList.remove('on'); root.classList.remove('ride-done');
-  }
-  function rideEvent(step, data = {}) {
-    const r = (st.P && st.P.ride) || {}, sts = arr(r.stations);
-    if (step === 'station') {
-      const i = num(data.i), x = sts[i]; if (!x) return;
-      R.rcLabel.textContent = `Station ${i + 1}/${sts.length} · ${x.label}`;
-      R.rcFlow.innerHTML = `Net flow <b class="${num(x.flow) < 0 ? 'neg' : 'pos'}">${chfSigned(x.flow)}</b>`;
-      R.rcBal.innerHTML = `Account <b>${chf(x.balance)}</b>`;
-      R.rcNote.textContent = x.note || ''; R.rcNote.style.display = x.note ? '' : 'none';
-      R.rcDots.querySelectorAll('i').forEach((d, j) => d.classList.toggle('on', j <= i));
-      R.rideCap.classList.remove('on'); void R.rideCap.offsetWidth; R.rideCap.classList.add('on');
-    } else if (step === 'end') {
-      R.rideCap.classList.remove('on'); root.classList.add('ride-done');
-      const b = r.before || {}, a = r.after || {};
-      R.rideSub.textContent = `${r.name || st.cfg.name || 'You'} · ${num(r.months)} months of ${r.source || 'data'}`;
-      const kpi = (k, from, to, fmt = chf) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(to)}</div><div class="s">before: ${fmt(from)}</div></div>`;
-      R.rideKpis.innerHTML = kpi('Typical month', r.typical_before, r.typical_after, chfSigned)
-        + kpi(`Net worth at ${num(a.alter_ende)}`, b.median_ende, a.median_ende)
-        + kpi('Chance of credit', b.p_kredit, a.p_kredit, v => Math.round(num(v) * 100) + ' %');
-      R.rideSt.innerHTML = arr(r.statements).map((t, i) => `<li style="animation-delay:${150 + i * 110}ms">${esc(t)}</li>`).join('');
-      R.rideEnd.classList.add('on');
-    }
-  }
-  function skipRide() { if (st.screen === 'ride' && onSkipIntro) onSkipIntro(); }
-
   /* ---------------------------------------------------------------- busy / waiting */
   function engineBusy() { return st.busy && performance.now() - st.busySince < 40000; }
   function updateLocks() {
@@ -833,6 +775,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     st.busy = b; if (b) st.busySince = performance.now();
     root.classList.toggle('play-busy', b && st.screen === 'play');
     if (st.screen === 'play') R.tray.classList.toggle('hide', !st.trayOpen || b || !st.selCat);
+    if (!b && st.screen === 'finale') finaleCheck(2000);       // finale done: a short look, then the facts
     if (b) showSkipMenu(false);
     updateLocks();
     if (b) setTimeout(updateLocks, 40500);
@@ -851,8 +794,8 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   }
   function act(value, label) {
     if (st.waiting) return;
-    const labels = { start: 'Preparing your life', restart: 'A new life is waiting', analyse: 'Opening the analysis',
-                     ride: 'Reading your data', ride_play: 'Starting your updated life', skip: 'Fast-forwarding your life' };
+    const labels = { start: 'Preparing your life', restart: 'A new life is waiting', analyse: 'Opening your life review',
+                     skip: 'Fast-forwarding your life' };
     const play = st.P && st.P.phase === 'play' && st.P.play;
     const waitTurn = play && (value.action === 'choose' || value.action === 'skip') ? num(play.turn) : null;
     setWaiting(true, label || labels[value.action], waitTurn);
@@ -878,11 +821,6 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
         if (ex && ex.ist) { st.ist = { ...ex.ist }; fillIst(); renderStartPanel(); toast(`📋 Example data loaded (${ex.name}) – adjust it as you like`, 2600); }
         break;
       }
-      case 'ride': startRide(false); break;
-      case 'rideSample': startRide(true); break;
-      case 'ridePlay': act({ action: 'ride_play' }, 'Starting your updated life'); break;
-      case 'rideSkip': skipRide(); break;
-      case 'template': ev.preventDefault(); downloadTemplate(); break;
       case 'start': startGame(); break;
       case 'selcat':
         if (st.selCat === b.dataset.k) st.trayOpen = !st.trayOpen; else { st.selCat = b.dataset.k; st.trayOpen = true; }
@@ -900,7 +838,6 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       case 'skip': doSkip(+b.dataset.i); break;
       case 'stay': if (!engineBusy()) act({ action: 'choose', key: ((st.P && st.P.play && st.P.play.stay) || {}).key || 'stay' }); break;
       case 'toFacts': go('facts'); break;
-      case 'toSummary': go('summary'); break;
       case 'restart': act({ action: 'restart' }); break;
       case 'skipIntro': skipIntro(); break;
     }
@@ -915,15 +852,6 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   window.addEventListener('pointerup', endDrag); window.addEventListener('pointercancel', endDrag); window.addEventListener('blur', endDrag);
   R.name.addEventListener('input', () => { st.cfg = { ...st.cfg, name: R.name.value.slice(0, 16) }; st.touched = true; });
   R.name.addEventListener('keydown', ev => { if (ev.key === 'Enter') R.name.blur(); });
-  R.csvIn.addEventListener('change', () => {
-    const f = R.csvIn.files && R.csvIn.files[0]; st.csv = null; st.csvName = '';
-    if (!f) { R.csvName.textContent = 'no file chosen'; return; }
-    if (f.size > 400000) { toast('📄 That file is too large (max. 400 KB)', 3200); R.csvIn.value = ''; return; }
-    const rd = new FileReader();
-    rd.onload = () => { st.csv = String(rd.result || ''); st.csvName = f.name; R.csvName.textContent = `✅ ${f.name}`; };
-    rd.onerror = () => toast('📄 Could not read the file', 3000);
-    rd.readAsText(f);
-  });
   R.istForm.addEventListener('input', ev => {
     const el = ev.target.closest('[data-ist]'); if (!el) return;
     st.ist = readIst();
@@ -932,7 +860,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
     if (st.intro && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { skipIntro(); ev.preventDefault(); return; }
     if (st.skipOpen && ev.key === 'Escape') { showSkipMenu(false); ev.preventDefault(); return; }
-    if (st.screen === 'ride' && !root.classList.contains('ride-done') && (ev.key === ' ' || ev.key === 'Escape')) { skipRide(); ev.preventDefault(); return; }
+    if (st.screen === 'finale' && (ev.key === ' ' || ev.key === 'Enter' || ev.key === 'Escape')) { go('facts'); ev.preventDefault(); return; }
     if (st.screen === 'title' && ev.key === 'Enter') { go('creator'); ev.preventDefault(); }
     else if (st.screen === 'creator') {
       if (ev.key === 'ArrowLeft') { stepOpt(-1); ev.preventDefault(); }
@@ -964,5 +892,5 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     if (st.loaded) route();
   }
   startLoading();
-  return { render, toast, setBusy, setWaiting, intro, rideEvent, get screen() { return st.screen; } };
+  return { render, toast, setBusy, setWaiting, intro, get screen() { return st.screen; } };
 }

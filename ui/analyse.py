@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from dataclasses import asdict, replace
 
@@ -18,6 +19,8 @@ from twin.config import (MARKET_PRESETS, STATE_NAMES, STRATEGY_PRESETS, Assumpti
                          Shocks, Shortfall)
 from twin.engine import PCTS, simulate
 from twin.lifechart import chart_data, life_chart
+from twin.lifechart.review_view import aspects_html, heading_html, hero_html, style_block, timeline_html
+from twin.review import review
 from twin.tipps import STYLES, tipps
 from twin.scenarios import (PRESET_LABELS, PRESETS, ExpenseChange, HouseBuy, Job, JobChange, MarketCrash, OneOff,
                             SelfEmployment, Study, Unemployment, describe, preset)
@@ -116,9 +119,163 @@ with st.sidebar:
 
 a = Assumptions(market=market, strategy=strategy, macro=macro, shortfall=shortfall, shocks=shocks)
 
-# ================================================================ header
-st.title("🛰️ AI Financial Twin")
-st.caption("Don't predict the future – make it explorable. Synthetic data, not investment advice.")
+# ================================================================ top: your life review + your twin
+# After a played game the page STARTS with the life review: the timeline of the choices (green ▲ / red ▼ / grey ●),
+# what went well and where to do better (twin.review), then the player's own 3D character on its podium as the agent
+# to talk to (chat on the right). Without a played game: the timeline of this page's life plan and the chat as before.
+EVENT_EMOJI = {"Study": "🎓", "Job": "💼", "JobChange": "🚀", "Unemployment": "📉", "SelfEmployment": "🧑‍💻",
+               "HouseBuy": "🏡", "OneOff": "🧾", "ExpenseChange": "🧾", "MarketCrash": "💥", "Retirement": "🪑"}
+
+
+def played_decisions(sess) -> list[dict]:
+    """Decisions of the game session (without "drive on"), with the age at which they were taken."""
+    out = []
+    try:
+        for h in getattr(sess, "history", None) or []:
+            if h.get("key") != "stay":
+                out.append({"age": sess.age_at(h["turn"]), "emoji": h.get("emoji", ""), "title": h.get("title", "")})
+    except Exception:
+        return []
+    return out
+
+
+def life_review(sess) -> dict | None:
+    """twin.review.review of the played game (None without one; never breaks the page)."""
+    try:
+        return review(sess)
+    except Exception:
+        logging.getLogger(__name__).exception("life review failed")
+        return None
+
+
+def plan_items(evs, start_age: int) -> list[dict]:
+    """The page's life-plan events as timeline chips (no effect arrows: nothing was played)."""
+    out = []
+    for e in evs:
+        age = round(start_age + e.start / 12, 1)
+        label = e.label[len(CRISIS_PREFIX):] if e.label.startswith(CRISIS_PREFIX) else e.label
+        out.append({"age": int(age) if float(age).is_integer() else age,
+                    "emoji": "⚡" if e.label.startswith(CRISIS_PREFIX) else EVENT_EMOJI.get(type(e).__name__, "📌"),
+                    "title": label})
+    return out
+
+
+def bubble_text(msg: dict) -> str:
+    text = msg.get("bubble") or msg.get("content", "")
+    text = re.sub(r"\*\*|“|”", "", text).replace(" Not investment advice.", "")
+    return text if len(text) <= 190 else text[:187].rsplit(" ", 1)[0] + " …"
+
+
+def show_podium(avatar: dict, bubble: str) -> bool:
+    """The player's own 3D character on its podium (twin.three_d.podium); False if it is not available."""
+    try:
+        from twin import three_d
+        podium = getattr(three_d, "podium", None)
+        if podium is None:
+            return False
+        podium(avatar, bubble=bubble, height=420, key="podium")
+        return True
+    except Exception:
+        logging.getLogger(__name__).exception("3D podium unavailable – SVG avatar instead")
+        return False
+
+
+events = tuple(st.session_state.events)
+is_me = pid == "__me__" and game is not None
+cfg = dict(getattr(game, "avatar", None) or {}) if is_me else {"name": person.name}
+ride = getattr(game, "ride_data", None) if is_me else None
+rv = life_review(game) if is_me else None
+
+st.markdown(style_block(), unsafe_allow_html=True)
+if rv:
+    f_ = rv["facts"]
+    n_ = f_["decisions"]
+    st.markdown(hero_html("YOUR LIFE REVIEW", f"{cfg.get('name') or person.name} · age {f_['start_age']} → "
+                                              f"{f_['end_age']} · {n_} choice{'s' if n_ != 1 else ''}",
+                          None), unsafe_allow_html=True)       # the verdict comes from the twin (below), timeline first
+    st.markdown(timeline_html(rv["timeline"], f_["start_age"], f_["end_age"], "YOUR TIMELINE",
+                              empty="You drove through life without a single decision."), unsafe_allow_html=True)
+    st.markdown(aspects_html(rv["positives"], rv["negatives"]), unsafe_allow_html=True)
+else:
+    st.markdown(hero_html("YOUR FINANCIAL TWIN", f"{person.name}, {person.age} · {years} years ahead", None,
+                          tag="ANALYSIS"), unsafe_allow_html=True)
+    st.markdown(timeline_html(plan_items(events, person.age), person.age, person.age + years, "YOUR PLAN",
+                              empty="No events yet – add some in the life plan below."), unsafe_allow_html=True)
+
+chat_ctx = ChatCtx(
+    person=person, years=years, a=a, events=events, calib=calib, n_paths=CHAT_PATHS, seed=seed,
+    name=cfg.get("name") if is_me else person.name, decisions=played_decisions(game) if is_me else [],
+    ride=ride if isinstance(ride, dict) else None, review=rv,
+    sim=lambda ev, yrs, a_: run(person, tuple(ev), yrs, a_, CHAT_PATHS, seed),
+    tips_fn=lambda: run_tips(person, years, a, seed),
+    drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed))
+chat_key = (pid, person, rv["verdict"]["text"] if rv else None)
+if st.session_state.get("twin_chat_key") != chat_key:
+    g = greeting(chat_ctx)
+    st.session_state.twin_chat = [{"role": "assistant", "content": g["text"], "bubble": g["bubble"], "mode": "offline",
+                                   "tool": g.get("tool")}]
+    st.session_state.twin_chat_key = chat_key
+    st.session_state.twin_pick_n = st.session_state.get("twin_pick_n", 0) + 1
+
+
+def ask(question: str) -> None:
+    st.session_state.twin_chat.append({"role": "user", "content": question})
+    with st.spinner("Your twin is calculating …"):
+        out = answer(chat_ctx, question)
+    st.session_state.twin_chat.append({"role": "assistant", "content": out["text"], "mode": out["mode"],
+                                       "tool": out["tool"]})
+    st.session_state.twin_chat = st.session_state.twin_chat[-40:]
+
+
+st.markdown("""<style>
+.twin-av { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.twin-bubble { position: relative; width: 100%; padding: 10px 13px; border-radius: 16px; font-size: .9rem;
+  line-height: 1.4; background: rgba(42,120,214,.10); border: 1px solid rgba(42,120,214,.35); }
+.twin-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px;
+  transform: translateX(-50%) rotate(45deg); background: inherit; border-right: inherit; border-bottom: inherit;
+  backdrop-filter: inherit; }
+.twin-av svg { max-width: 150px; height: auto; }
+</style>""", unsafe_allow_html=True)
+
+st.markdown(heading_html("TALK TO YOUR TWIN" if rv else "YOUR TWIN"), unsafe_allow_html=True)
+with st.container(border=True):
+    av_col, chat_col = st.columns([1.15, 2.2] if rv else [1, 2.6], gap="large")
+    with chat_col:
+        box = st.container(height=400 if rv else 330)
+        pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
+                        label_visibility="collapsed")
+        question = st.chat_input("Ask your twin – e.g. “What could I have done better?”" if rv else
+                                 "Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
+        if pick:
+            ask(pick)
+            st.session_state.twin_pick_n += 1
+            st.rerun()
+        if question:
+            ask(question)
+        with box:
+            for msg in st.session_state.twin_chat:
+                with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
+                    st.markdown(msg["content"])
+    with av_col:
+        last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
+        # the bubble follows the conversation: the grade first, then the twin's latest answer (short)
+        verdict_line = f"Grade {rv['verdict']['grade']} – {rv['verdict']['title']}" if rv else ""
+        bubble = verdict_line if len(st.session_state.twin_chat) <= 1 else bubble_text(last or {})
+        on_podium = bool(rv) and show_podium(cfg, bubble)
+        if not on_podium:
+            av = avatar_from_cfg(cfg, person.name)
+            st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble_text(last or {}))}</div>'
+                        f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
+        llm = status()
+        st.caption(f"🧠 Local model {llm['model']} picks the calculation; the numbers come from the simulation."
+                   if llm["available"] else
+                   "⚙️ Offline mode: rule-based routing. Start Ollama for the local model – the numbers "
+                   "come from the simulation either way.")
+
+# ================================================================ explore more (the full dashboard)
+st.header("🔍 Explore more")
+st.caption("Your data, a life plan, crises and all the charts – the assumptions are in the sidebar. "
+           "Don't predict the future – make it explorable. Synthetic data, not investment advice.")
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Person", f"{person.name}, {person.age}")
@@ -247,91 +404,6 @@ if m["p_alv_exhausted"] > 0:
     warnings.append(f"Unemployment benefits run out in **{m['p_alv_exhausted']:.0%}** of the cases.")
 for w in warnings:
     st.warning(w, icon="⚠️")
-
-# ================================================================ your twin: avatar + chat
-def played_decisions(sess) -> list[dict]:
-    """Decisions of the game session (without "drive on"), with the age at which they were taken."""
-    out = []
-    try:
-        for h in getattr(sess, "history", None) or []:
-            if h.get("key") != "stay":
-                out.append({"age": sess.age_at(h["turn"]), "emoji": h.get("emoji", ""), "title": h.get("title", "")})
-    except Exception:
-        return []
-    return out
-
-
-def bubble_text(msg: dict) -> str:
-    text = msg.get("bubble") or msg.get("content", "")
-    text = re.sub(r"\*\*|“|”", "", text).replace(" Not investment advice.", "")
-    return text if len(text) <= 190 else text[:187].rsplit(" ", 1)[0] + " …"
-
-
-st.markdown("""<style>
-.twin-av { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.twin-bubble { position: relative; width: 100%; padding: 10px 13px; border-radius: 16px; font-size: .9rem;
-  line-height: 1.4; background: rgba(42,120,214,.10); border: 1px solid rgba(42,120,214,.35); }
-.twin-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px;
-  transform: translateX(-50%) rotate(45deg); background: inherit; border-right: inherit; border-bottom: inherit;
-  backdrop-filter: inherit; }
-.twin-av svg { max-width: 150px; height: auto; }
-</style>""", unsafe_allow_html=True)
-
-is_me = pid == "__me__" and game is not None
-cfg = dict(getattr(game, "avatar", None) or {}) if is_me else {"name": person.name}
-ride = getattr(game, "ride_data", None) if is_me else None
-chat_ctx = ChatCtx(
-    person=person, years=years, a=a, events=events, calib=calib, n_paths=CHAT_PATHS, seed=seed,
-    name=cfg.get("name") if is_me else person.name, decisions=played_decisions(game) if is_me else [],
-    ride=ride if isinstance(ride, dict) else None,
-    sim=lambda ev, yrs, a_: run(person, tuple(ev), yrs, a_, CHAT_PATHS, seed),
-    tips_fn=lambda: run_tips(person, years, a, seed),
-    drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed))
-chat_key = (pid, person)
-if st.session_state.get("twin_chat_key") != chat_key:
-    g = greeting(chat_ctx)
-    st.session_state.twin_chat = [{"role": "assistant", "content": g["text"], "bubble": g["bubble"], "mode": "offline"}]
-    st.session_state.twin_chat_key = chat_key
-    st.session_state.twin_pick_n = st.session_state.get("twin_pick_n", 0) + 1
-
-
-def ask(question: str) -> None:
-    st.session_state.twin_chat.append({"role": "user", "content": question})
-    with st.spinner("Your twin is calculating …"):
-        out = answer(chat_ctx, question)
-    st.session_state.twin_chat.append({"role": "assistant", "content": out["text"], "mode": out["mode"],
-                                       "tool": out["tool"]})
-    st.session_state.twin_chat = st.session_state.twin_chat[-40:]
-
-
-st.subheader("🙋 Your twin")
-with st.container(border=True):
-    av_col, chat_col = st.columns([1, 2.6], gap="large")
-    with chat_col:
-        box = st.container(height=330)
-        pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
-                        label_visibility="collapsed")
-        question = st.chat_input("Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
-        if pick:
-            ask(pick)
-            st.session_state.twin_pick_n += 1
-            st.rerun()
-        if question:
-            ask(question)
-        with box:
-            for msg in st.session_state.twin_chat:
-                with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
-                    st.markdown(msg["content"])
-    with av_col:
-        last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
-        av = avatar_from_cfg(cfg, person.name)
-        st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble_text(last or {}))}</div>'
-                    f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
-        llm = status()
-        st.caption(f"🧠 Local model {llm['model']} picks the calculation; the numbers come from the simulation."
-                   if llm["available"] else
-                   "⚙️ Offline mode: rule-based routing. Start Ollama for the local model – the numbers "
-                   "come from the simulation either way.")
 
 # ================================================================ charts
 x = np.arange(years * 12 + 1) / 12

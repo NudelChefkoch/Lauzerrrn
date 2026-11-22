@@ -28,3 +28,13 @@ def game(payload: dict, key: str = "game") -> dict | None:
     (``{"action": ..., "nonce": ...}``) or None.
     """
     return _component(mode="game", payload=payload, key=key, default=None)
+
+
+def podium(avatar: dict, bubble: str | None = None, height: int = 420, key: str = "podium") -> None:
+    """Only the player's 3D character on its podium (analysis page: the twin as the agent to talk to).
+
+    Slow idle turn with a gentle bob, waves once (and again whenever ``bubble`` changes); ``bubble`` = optional
+    speech bubble above the character in the game's style. No other UI; the frame is ``height`` px high.
+    """
+    _component(mode="podium", avatar=dict(avatar or {}), bubble=bubble or None, height=int(height), key=key,
+               default=None)

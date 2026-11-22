@@ -53,8 +53,8 @@ The game starts with YOUR status quo (one example data set can pre-fill the form
 Career = Job after your degree, Entry job, Job change, Part-time, Retire; Housing = buy a home (UBS mortgage, price
 adjustable), rent a luxury flat, adjust monthly costs; Family = wedding, child (costs adjustable, end at 18);
 Time off = gap year.
-Later real monthly data (CSV: `month,net_transactions_chf[,closing_cash_chf]`) can be replayed as a film ride: the twin is
-updated with `twin/daten_update.py` and drives through the months, then shows the updated statements.
+Later real monthly data (CSV: `month,net_transactions_chf[,closing_cash_chf]`) updates the twin with
+`twin/daten_update.py` (`GameSession.ride` / `aktualisiere_mit_daten`); the film ride is no longer offered in the game UI.
 The whole GUI (game + analysis) is in English. No XP/levels. A fresh game starts with an intro (fly-over of the island,
 how to play, countdown; skippable). The game invests with the balanced default; investment styles are compared
 on the analysis page. "Get married" plays its own wedding scene (chapel, guests, partner) and the partner then rides along in the car.
@@ -68,3 +68,21 @@ on the analysis page. "Get married" plays its own wedding scene (chapel, guests,
   Action `card_params` updates lock, preview and text.
 - Skip: `{"action": "skip", "years": n}` or `{"until": "event"}` drives several years in one step.
 - The uploaded CSV is only the past net flow per month; future costs come from the status quo and the game's decisions.
+
+**End of the game → life review** (analysis page):
+- The game ends with the financial facts; "YOUR LIFE REVIEW ▶" sends `{"action": "analyse"}` and the analysis page
+  (`ui/analyse.py`) starts with the review, in the game's style (Lilita One / Nunito, chunky ink-bordered cards):
+  1. **Timeline** of every choice on a horizontal age axis (after Juli's financial-twin timeline): green ▲ = better for
+     your money, red ▼ = costs you money, grey ● = about the same (numbers only in the tooltip).
+  2. **What went well / Where you can do better**: two columns of cards, every negative with a "Better:" tip.
+  3. **Talk to your twin**: your own 3D character on its podium (`twin.three_d.podium`, SVG fallback) on the left,
+     the chat on the right. The twin greets with the verdict (grade A–E) and the 2 biggest improvements; questions like
+     "Did I do well?" / "What could I have done better?" go to the chat tool `review`.
+  Below, under "Explore more", the full dashboard stays as before. Without a played game the page shows the timeline
+  of its own life plan and the chat as before.
+- `twin/review.py`: `review(game_session)` → `{verdict, timeline, positives, negatives, facts}`. The arrow and amount
+  of a choice are the ones its card showed in the game (median at 85 with the choice minus "drive on" at that moment,
+  same seed), so the timeline never contradicts the cards; `effect` = the whole-life effect (all played decisions WITH
+  vs WITHOUT that one, same seed = common random numbers, whole life re-simulated) is kept per item; life-wide checks on the played life (months on credit, biggest loan, buffer, savings rate, retirement,
+  gap years, children, house purchases that would often fail). Cached, well under a second for a typical game.
+- `twin/lifechart/review_view.py`: the game-style HTML blocks (fonts embedded from `twin/frontend3d/fonts`, offline).

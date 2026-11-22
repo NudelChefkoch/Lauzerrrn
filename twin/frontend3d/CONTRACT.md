@@ -207,3 +207,38 @@ Binding for Python (`twin/session.py`, `twin/game.py`), the engine and the UI. C
 - `{"action": "skip", "years": 5, "nonce": n}` (years ≥ 1, clipped to the end of life) or
   `{"action": "skip", "until": "event", "nonce": n}` = n × `choose("stay")` in one step. A rejected skip (game over,
   years < 1) changes nothing but bumps `seq`.
+
+
+## Update: arrows, status tile, end -> review
+Binding for Python (`twin/session.py`, `twin/game.py`, `twin/three_d.py`), the engine and the UI. Supersedes the
+card preview chips, the side-panel fan chart, the life summary screen and the film-ride entry described above.
+
+- **No film ride in the game UI.** The start panel has the status-quo form, the example-data loader and LET'S GO only
+  (flow: status quo → LET'S GO → intro → play). The Python side (`action: "ride"`, phase `ride`, `twin.daten_update`)
+  still works for tests / the analysis; a `ride` payload is shown like `boot` by the client.
+- **Decision cards show ONE arrow, no numbers.** Every card with a preview carries `"impact": "up" | "down" | "flat"`
+  (`None` when locked), from `game.impact(delta, stay_median)`: `"flat"` only if |delta| < 1 % of |stay median| and
+  < CHF 20'000, else the sign of `delta`. The client draws a 40 px circle badge in the band corner – green ▲ "Better for
+  your money", red ▼ "Costs you money", grey ● "About the same" – plus the same words under the text. The numbers
+  (`delta, median, p5, p95, credit`) stay in the payload for the end (facts, analysis) but are not rendered in the game.
+  Lock reasons, sliders (`params`) and the card look are unchanged. `summary.choices[]` gains `impact` too.
+- **"Where you stand" tile** replaces the side panel's net-worth fan (canvas + legend; `play.fan` is still sent but not
+  drawn). `hud` gains:
+  `net_worth_prev` (net worth at the previous stop = `world.prev_turn`, i.e. one station ago or where a skip started;
+  `null` at the start), `prev_age` (age at that stop, `null` at the start), `expenses` (planned monthly expenses, month-0
+  CHF) and `health`: `"credit"` (consumer credit or a personal loan open – the mortgage does not count), else `"ok"`
+  (cash ≥ 3 months of `expenses`) or `"thin"`. The tile shows the net worth today (big), the change since `prev_age`
+  with a green ▲ / red ▼ arrow and a badge 🟢 Buffer OK / 🟡 Thin buffer / 🔴 On credit. Goals and the stations strip stay.
+  Why: the 60-year fan forecast spoiled the ending, contradicted the no-numbers cards and its median (tens of millions)
+  confused players – during the game they need "where am I now", not a forecast.
+- **End of the game:** phase `end` → screen **finale** (the island plays the retirement finale; tag "THE FINISH LINE",
+  RESULTS ▶▶ / Space skips; when the engine is idle again the client moves on) → **FINANCIAL FACTS** (tiles, percentile
+  gauge, "your life vs. just driving on" chart). Buttons: **YOUR LIFE REVIEW ▶** (biggest, sends `{"action":
+  "analyse"}`) and PLAY AGAIN. The life summary screen is gone (`end.summary` stays in the payload for the analysis).
+  `facts.disclaimer` may stay in the payload but is never rendered.
+- **Podium mode** (`three_d.podium(avatar, bubble=None, height=420, key="podium")` → component args
+  `{mode: "podium", avatar, bubble, height}`): only the player's 3D character on its podium (engine `showPodium(cfg,
+  {wave})` = creator scene + `buildCharacter`, slow idle turn, gentle bob, waves once on load and again whenever
+  `bubble` changes; drag rotates), game-style rounded frame with the sunburst background, optional speech bubble with
+  `bubble` above the character (HTML overlay, white, ink border, drop shadow), no other UI, frame height = `height`.
+  Standalone demo: `index.html?mode=podium`; `index.html` alone is the game demo as before.

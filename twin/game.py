@@ -1,7 +1,8 @@
 """Game layer "Lebensweg": one station per year, the player CHOOSES (no dice), very gamified.
 
 * Decisions are grouped by category; locked options show why (e.g. "Down payment missing").
-* Every card shows the twin's preview (median net worth at the end, range, credit risk).
+* Every card carries the twin's preview (median net worth at the end, range, credit risk); the game shows only its
+  direction (``impact``: green ▲ / red ▼ / grey ●), the numbers are used at the end (facts, analysis).
 * Some cards are adjustable (``Option.params``: house price, child costs, monthly costs); lock, preview and text
   follow the chosen values.
 * Goals (quests) make the trade-offs tangible (no XP, levels, achievements or joy meter).
@@ -29,7 +30,7 @@ from .scenarios import (Event, ExpenseChange, HouseBuy, Job, JobChange, OneOff, 
 RETIRE_AGE = 65          # statutory AHV age: horizon of the twin's statements after the film ride (daten_update)
 RETIRE_FROM = 60         # the "Retire" card unlocks at this age
 FORCED_RETIRE_AGE = 70   # retirement happens at the latest here (label "Retirement")
-END_AGE = 85             # the game (life summary) ends here
+END_AGE = 85             # the game ends here (retirement finale, then the financial facts)
 PENSION_RATE = 0.60      # AHV + pension fund, simplified: share of the last salary
 CHILD_MONTHS = 216       # child costs end when the child turns 18 and moves out
 MIN_EXPENSES = 500       # monthly costs cannot be cut below this (month-0 CHF)
@@ -53,6 +54,24 @@ def chf(x: float) -> str:
     return f"CHF {x:,.0f}".replace(",", "'")
 
 
+FLAT_SHARE = 0.01        # a card's effect counts as "about the same" below 1 % of the drive-on median ...
+FLAT_MAX = 20_000.0      # ... and below CHF 20'000
+
+
+def impact(delta: float | None, base: float | None = None) -> str | None:
+    """Direction of a decision's effect on the net worth at the end, as the cards show it (no numbers):
+    "up" (green ▲), "down" (red ▼) or "flat" (grey ●: |delta| < 1 % of |base| and < CHF 20'000).
+    None when there is no preview (locked card)."""
+    if delta is None or not math.isfinite(float(delta)):
+        return None
+    d = float(delta)
+    if base is not None and math.isfinite(float(base)) and abs(d) < min(FLAT_SHARE * abs(float(base)), FLAT_MAX):
+        return "flat"
+    if d > 0:
+        return "up"
+    return "down" if d < 0 else "flat"
+
+
 # ---------------------------------------------------------------- snapshot & context
 @dataclass(frozen=True)
 class Snapshot:
@@ -65,6 +84,7 @@ class Snapshot:
     net_worth: float
     liquid: float
     expenses: float = 0.0        # planned monthly expenses at that month (month-0 prices)
+    house_equity: float = 0.0    # house value minus mortgage (net worth - house equity = liquid money - credit - loan)
 
 
 def snapshot(res: Result, month: int) -> Snapshot:
@@ -75,7 +95,8 @@ def snapshot(res: Result, month: int) -> Snapshot:
     return Snapshot(month, int(p["state"][min(month + 1, res.plan.months)]), float(res.plan.income[m]),
                     float(p["cash"][month]),
                     float(p["portfolio"][month]), float(p["debt"][month]), float(p["net_worth"][month]),
-                    float(p["liquid"][month]), float(res.person.expenses + res.plan.extra_expenses[m]))
+                    float(p["liquid"][month]), float(res.person.expenses + res.plan.extra_expenses[m]),
+                    float(p["house_equity"][month]))
 
 
 @dataclass(frozen=True)

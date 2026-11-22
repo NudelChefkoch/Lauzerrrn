@@ -1,19 +1,58 @@
-// Entry point: Streamlit bridge (component mode "game") + standalone DEMO mode (python3 -m http.server).
-import { initEngine, setToastHandler, setBusyHandler, setIntroHandler, setRideHandler, skipIntro } from './engine.js';
+// Entry point: Streamlit bridge (component modes "game" and "podium") + standalone DEMO mode (python3 -m http.server;
+// index.html?mode=podium shows the podium mode).
+import { initEngine, setToastHandler, setBusyHandler, setIntroHandler, skipIntro, showPodium } from './engine.js';
 import { DEFAULT_CFG } from './core.js';
 import { createUI } from './ui.js';
 
 const STANDALONE = (() => { try { return window.parent === window; } catch (e) { return false; } })();
+const DEMO_MODE = (() => { try { return new URLSearchParams(location.search).get('mode') || 'game'; } catch (e) { return 'game'; } })();
 
-/* =================================================================== engine + UI */
+/* =================================================================== engine (UI is created once the mode is known) */
 const stage = document.getElementById('stage');
 let engineOk = false;
 try { initEngine(stage); engineOk = true; } catch (e) { console.warn('[game] 3D engine unavailable – UI runs without 3D', e); }
 
 let lastNonce = 0;
 const nextNonce = () => (lastNonce = Math.max(Date.now(), lastNonce + 1));
-const ui = createUI(document.getElementById('ui'), { send, engineOk, standalone: STANDALONE, onSkipIntro: () => { try { skipIntro(); } catch (e) { /* engine missing */ } } });
-try { setToastHandler((text, ms) => ui.toast(text, ms)); setBusyHandler(b => ui.setBusy(b)); setIntroHandler((step, data) => ui.intro(step, data)); setRideHandler((step, data) => ui.rideEvent(step, data)); } catch (e) { /* engine missing */ }
+let ui = null, mode = null;
+// the game UI (loading → title → creator → play → facts); built on the first "game" render (or at once in the demo)
+function gameUI() {
+  if (ui) return ui;
+  mode = 'game';
+  ui = createUI(document.getElementById('ui'), { send, engineOk, standalone: STANDALONE, onSkipIntro: () => { try { skipIntro(); } catch (e) { /* engine missing */ } } });
+  try { setToastHandler((text, ms) => ui.toast(text, ms)); setBusyHandler(b => ui.setBusy(b)); setIntroHandler((step, data) => ui.intro(step, data)); } catch (e) { /* engine missing */ }
+  return ui;
+}
+
+/* =================================================================== podium mode (analysis page: the twin as the agent) */
+// Only the 3D character on its podium + an optional speech bubble in the game's style. No other UI.
+const POD = { cfg: null, bubble: null, el: null, txt: null, waved: false };
+function podium(args) {
+  mode = 'podium';
+  document.body.dataset.screen = 'podium';
+  if (!POD.el) {
+    POD.el = document.createElement('div'); POD.el.className = 'pod-bubble'; POD.el.setAttribute('aria-live', 'polite');
+    POD.txt = document.createElement('span'); POD.txt.className = 'pb-t'; POD.el.appendChild(POD.txt);
+    document.getElementById('ui').appendChild(POD.el);
+    if (!engineOk) { const f = document.createElement('div'); f.className = 'pod-fallback'; f.textContent = '🙂'; document.getElementById('ui').appendChild(f); }
+  }
+  const cfg = { ...DEFAULT_CFG, ...(args.avatar && typeof args.avatar === 'object' ? args.avatar : {}) };
+  const bubble = typeof args.bubble === 'string' && args.bubble.trim() ? args.bubble.trim() : null;
+  const said = bubble !== POD.bubble;
+  // waves once when it appears, and again whenever it says something new
+  if (engineOk) try { showPodium(cfg, { wave: !POD.waved || (said && !!bubble) }); } catch (e) { console.warn('[game] podium failed', e); }
+  POD.waved = true; POD.cfg = cfg;
+  if (said) {
+    POD.bubble = bubble;
+    POD.txt.textContent = bubble || '';
+    POD.el.classList.remove('on', 'pop'); void POD.el.offsetWidth;
+    if (bubble) POD.el.classList.add('on', 'pop');
+  }
+  if (!STANDALONE) {
+    const h = Math.max(160, Math.round(+args.height || 420));
+    if (h !== lastH) { lastH = h; post('streamlit:setFrameHeight', { height: h }); }
+  }
+}
 
 /* =================================================================== Streamlit bridge */
 function post(type, data = {}) {
@@ -22,7 +61,7 @@ function post(type, data = {}) {
 let lastPayload = null, lastH = 0;
 function parentHeight() { try { const h = window.parent.innerHeight; return h > 200 ? h : 0; } catch (e) { return 0; } }
 function setHeight() {
-  if (STANDALONE) return;
+  if (STANDALONE || mode !== 'game') return;
   const h = Math.round(parentHeight() || +(lastPayload && lastPayload.height) || 860);
   if (Math.abs(h - lastH) < 1) return;
   lastH = h; post('streamlit:setFrameHeight', { height: h });
@@ -39,14 +78,15 @@ if (!STANDALONE) {
     if (ev.source && ev.source !== window.parent) return;
     const d = ev.data; if (!d || d.type !== 'streamlit:render') return;
     const args = d.args || {};
+    if (args.mode === 'podium' && mode !== 'game') { podium(args); return; }
     if (args.mode && args.mode !== 'game') return;
+    if (mode === 'podium') return;
     const p = args.payload; if (!p || typeof p !== 'object') return;
-    lastPayload = p; setHeight(); ui.render(p);
+    lastPayload = p; gameUI(); setHeight(); ui.render(p);
   });
   try { window.parent.addEventListener('resize', setHeight); } catch (e) { /* cross-origin parent */ }
   window.addEventListener('resize', setHeight);
   post('streamlit:componentReady', { apiVersion: 1 });
-  setHeight();
 }
 
 /* =================================================================== DEMO (standalone, made-up numbers) */
@@ -244,20 +284,18 @@ function cardPayload(s, c, base) {
   if (c.params) out.params = Object.fromEntries(Object.entries(PARAMS[c.params]).map(([n, p]) => [n, { ...p, value: pv[n] }]));
   if (lock && !c.params) return out;          // locked cards preview only when a slider can unlock them (house price)
   const pr = projectEnd(s, c, pv), yrs = Math.max(1, s.K - s.turn), spread = Math.max(15000, Math.abs(pr.nw) * .2) * Math.sqrt(yrs / 20);
-  Object.assign(out, { delta: r0(pr.nw - base), median: r0(pr.nw), p5: r0(pr.nw - spread), p95: r0(pr.nw + spread * 1.35), credit: pr.credit });
+  const delta = r0(pr.nw - base);
+  Object.assign(out, { impact: impactOf(delta, base), delta, median: r0(pr.nw), p5: r0(pr.nw - spread), p95: r0(pr.nw + spread * 1.35), credit: pr.credit });
   return out;
 }
-function projection(s) {
-  // past + a widening band around the deterministic path from "now"
-  const x = clone(s), mid = [demoNW(x)];
-  while (x.turn < x.K) { advance(x, false, noAnim); mid.push(demoNW(x)); }
-  const p5 = [], p50 = [], p95 = [];
-  for (let i = 0; i <= s.K; i++) {
-    if (i < s.turn) { const v = s.past[i]; p5.push(v); p50.push(v); p95.push(v); continue; }
-    const m = mid[i - s.turn], sp = (Math.abs(m) * .05 + 6000) * Math.sqrt(i - s.turn);
-    p50.push(r0(m)); p5.push(r0(m - sp)); p95.push(r0(m + sp * 1.35));
-  }
-  return { p5, p50, p95 };
+// same rule as twin/game.py impact(): grey only below 1 % of the drive-on median and below CHF 20'000
+function impactOf(delta, base) {
+  if (Math.abs(delta) < Math.min(.01 * Math.abs(base), 20000)) return 'flat';
+  return delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+}
+function demoHealth(s) {
+  if (s.debt > 1) return 'credit';
+  return s.cash >= 3 * s.expenses ? 'ok' : 'thin';
 }
 function stateLabel(s) {
   const base = s.gap > 0 ? 'gap year' : ({ studying: 'studying', looking: s.degrees.length ? 'graduated · looking' : 'looking for a job',
@@ -277,13 +315,14 @@ function demoSkipOptions(s) {
   return out;
 }
 function demoPlay() {
-  const s = D.s, nw = demoNW(s), proj = projection(s), base = proj.p50[s.K];
-  const ages = Array.from({ length: s.K + 1 }, (_, i) => s.startAge + i);
+  const s = D.s, nw = demoNW(s), base = projectEnd(s, null).nw;
   const avail = CARDS.filter(c => c.once === false || !s.taken.includes(c.key)).map(c => cardPayload(s, c, base));
   return {
     turn: s.turn, K: s.K, step: 1, start_age: s.startAge, end_age: s.startAge + s.K, age: ageOf(s),
     hud: { name: D.avatar.name, age: ageOf(s), net_worth: r0(nw), cash: r0(s.cash), portfolio: r0(s.portfolio), debt: r0(s.debt),
-           income: r0(incomeOf(s)), state: stateLabel(s) },
+           income: r0(incomeOf(s)), state: stateLabel(s),
+           net_worth_prev: s.turn > 0 ? r0(s.past[s.prevTurn]) : null, prev_age: s.turn > 0 ? s.startAge + s.prevTurn : null,
+           expenses: r0(s.expenses), health: demoHealth(s) },
     world: demoWorld(false),
     categories: CATS.map(c => ({ ...c, open: avail.filter(k => k.cat === c.key && !k.locked).length })),
     cards: avail,
@@ -294,7 +333,6 @@ function demoPlay() {
       { name: "CHF 100'000 net worth", current: r0(Math.max(0, nw)), target: 100000, by_age: Math.min(s.startAge + 15, s.startAge + s.K) },
     ].map(q => ({ ...q, progress: Math.min(1, Math.max(0, q.current / Math.max(1, q.target))), done: q.current >= q.target })),
     history: s.history,
-    fan: { ages, past: s.past.slice(), p5: proj.p5, p50: proj.p50, p95: proj.p95, now_index: s.turn },
   };
 }
 function demoEnd() {
@@ -313,8 +351,7 @@ function demoEnd() {
                percentile: pct, decisions: s.choices.length, choices: s.choices },
     facts: { net_worth: r0(nw), percentile: pct, p5: p5[n - 1], p95: p95[n - 1], lazy_median: lazy[n - 1], cash: r0(s.cash), portfolio: r0(s.portfolio),
              house_equity: r0(s.house), debt: r0(s.debt), max_credit: r0(s.maxCredit), months_with_credit: s.monthsCredit, decisions: s.choices.length,
-             best: s.best, fan: { ages, past: s.past.map(r0), p5, p50, p95, lazy, now_index: n - 1 },
-             disclaimer: 'Synthetic data · not a forecast · not investment advice' },
+             best: s.best, fan: { ages, past: s.past.map(r0), p5, p50, p95, lazy, now_index: n - 1 } },
   };
 }
 function demoPayload() {
@@ -336,11 +373,11 @@ function demoStep(key, params) {
   const age = ageOf(s);
   if (card) {
     if (!s.taken.includes(card.key)) s.taken.push(card.key);
-    const delta = cardPayload(s, card, projectEnd(s, null).nw).delta;
+    const base = projectEnd(s, null).nw, delta = cardPayload(s, card, base).delta;
     card.apply(s, pv, anim);
     s.badges[String(s.turn + 1)] = card.emoji;
     s.history.push({ age, emoji: card.emoji, title: card.title });
-    s.choices.push({ age, emoji: card.emoji, title: card.title, cat_label: catLabel(card.cat), delta });
+    s.choices.push({ age, emoji: card.emoji, title: card.title, cat_label: catLabel(card.cat), delta, impact: impactOf(delta, base) });
     if (!s.best || delta > s.best.delta) s.best = { title: card.title, delta };
   }
   const events = advance(s, true, anim);
@@ -355,12 +392,11 @@ function demoStep(key, params) {
 }
 function demoSend(v) {
   if (v.action === 'analyse') {
-    setTimeout(() => { ui.setWaiting(false); ui.toast('📊 The analysis is available in the Streamlit app', 2800); }, 500);
+    setTimeout(() => { ui.setWaiting(false); ui.toast('📊 Your life review opens in the Streamlit app', 2800); }, 500);
     return;
   }
   setTimeout(() => {
     D.seq += 1;
-    if (v.action === 'ride' || v.action === 'ride_play') { ui.toast('🎬 The film ride needs the Streamlit app (python backend)', 3200); ui.render(demoPayload()); return; }
     const s = D.s;
     if (v.action === 'start') {
       D.prof = v.ist || PROFILES[0].ist;
@@ -385,7 +421,13 @@ function demoSend(v) {
   }, v.action === 'card_params' ? 180 + Math.random() * 200 : 650 + Math.random() * 400);
 }
 
-if (STANDALONE) {
+if (STANDALONE && DEMO_MODE === 'podium') {
+  console.info('[game] standalone DEMO – podium mode');
+  const lines = ["Hi! I'm your twin. Ask me how you did with your money.", 'You kept a buffer most of your life – nice!',
+                 'Your biggest lever: start investing earlier.'];
+  let i = 0; podium({ avatar: DEFAULT_CFG, bubble: lines[0], height: 420 });
+  setInterval(() => { i = (i + 1) % lines.length; podium({ avatar: DEFAULT_CFG, bubble: lines[i], height: 420 }); }, 6000);
+} else if (STANDALONE) {
   console.info('[game] standalone DEMO mode – mock payloads, no Streamlit');
-  ui.render(demoPayload());
+  gameUI().render(demoPayload());
 }

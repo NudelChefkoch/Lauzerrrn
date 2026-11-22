@@ -164,3 +164,56 @@ def test_chart_data_from_simulation(calib):
     assert d["default_comp"] == "short"
     assert {"month": 24, "label": "House purchase"} in d["events"]
     assert {"month": 36, "label": "⚡ Market crash"} in d["events"]
+
+
+# ---------------------------------------------------------------- review tool (after a played game)
+@pytest.mark.parametrize("question", ["Did I do well?", "How did I do?", "What could I have done better?",
+                                      "Show me my life review", "Was habe ich falsch gemacht? Fehler?",
+                                      "Habe ich gut gespielt?"])
+def test_router_review(ctx, question):
+    assert ac.route_offline(ctx, question)[0] == "review"
+
+
+@pytest.mark.parametrize("question", ["How much could I have at 65?", "Wie viel habe ich mit 65 wenn ich ein Haus kaufe?",
+                                      "Is pillar 3a worth it?"])
+def test_router_not_review_for_forward_questions(ctx, question):
+    assert ac.route_offline(ctx, question)[0] != "review"
+
+
+@pytest.fixture(scope="module")
+def played_review():
+    from twin.review import review
+    from twin.session import GameSession
+    s = GameSession()
+    s.start({"age": 27, "status": "employed", "income": 6000, "expenses": 4700, "rent": 1600, "cash": 12000,
+             "portfolio": 8000, "debt": 0}, {"name": "Testi"}, seed=1)
+    for k in ("switch", "wedding", "child"):
+        assert s.choose(k)
+    while s.phase == "play":
+        s.skip(10)
+    return review(s)
+
+
+def test_review_tool_and_greeting(ctx, played_review):
+    out = ac.answer(ctx, "What could I have done better?")            # no game played: a hint, no crash
+    assert out["tool"] == "review" and "Play the game" in out["text"] and out["text"].endswith(ac.DISCLAIMER)
+    ctx.review, ctx.name = played_review, "Testi"
+    v, neg = played_review["verdict"], played_review["negatives"]
+    out = ac.answer(ctx, "Did I do well?")
+    assert out["tool"] == "review" and out["mode"] == "offline"
+    assert f"Grade {v['grade']}" in out["text"] and v["text"] in out["text"]
+    assert neg[0]["better"] in out["text"] and out["numbers"]["better"] == [n["title"] for n in neg[:3]]
+    g = ac.greeting(ctx)
+    assert g["tool"] == "review" and g["text"].startswith("Hi Testi!") and g["text"].endswith(ac.DISCLAIMER)
+    assert g["bubble"] == f"Grade {v['grade']} – {v['title']}"
+    assert g["numbers"]["better"] == [n["title"] for n in neg[:2]]
+    assert all(n["title"] in g["text"] and n["better"] in g["text"] for n in neg[:2])
+    assert "What could I have done better?" in ac.suggestions(ctx)
+
+
+def test_fake_llm_can_pick_review(ctx, played_review, monkeypatch):
+    ctx.review = played_review
+    monkeypatch.setattr(ac, "status", lambda force=False: {"available": True, "model": "fake"})
+    monkeypatch.setattr(ac, "request_chat", lambda messages, fmt=None, **kw: {"tool": "review", "age": 0, "price": 0})
+    out = ac.answer(ctx, "Was my life a success, money-wise?")
+    assert out["mode"] == "llm" and out["tool"] == "review" and "Grade" in out["text"]

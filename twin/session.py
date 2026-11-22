@@ -105,6 +105,18 @@ def _preview(person: Person, events: tuple, key: str, month: int, a: Assumptions
                         dict(values))
 
 
+BUFFER_MONTHS = 3        # money health: cash for 3 months of expenses = "Buffer OK"
+
+
+def money_health(snap) -> str:
+    """Money-health badge of the "Where you stand" tile: "credit" (consumer credit or a personal loan is open –
+    the mortgage does not count), "ok" (cash covers >= 3 months of expenses) or "thin" (less)."""
+    owed = snap.cash + snap.portfolio + snap.house_equity - snap.net_worth     # = credit + loan
+    if owed > 1:
+        return "credit"
+    return "ok" if snap.cash >= BUFFER_MONTHS * max(snap.expenses, 0.0) else "thin"
+
+
 class GameSession:
     """One player's game. Methods: start, choose, skip, set_params, ride, restart, payload, handle,
     aktualisiere_mit_daten."""
@@ -217,13 +229,14 @@ class GameSession:
         snap = snapshot(res, m0)
         ctx = self._ctx(res, m0)
         values = opt.values({**self.params.get(key, {}), **(params if isinstance(params, dict) else {})})
-        delta = None
+        delta = base = None
         if key != "stay":
             if opt.reason(ctx, values) is not None:
                 return False
             if self._preview(key, m0, ctx, values).get("house_failed"):
                 return False                     # the purchase would fail in the played life (see game.preview)
             delta = self._delta(key, m0, ctx, values)
+            base = float(self._preview("stay", m0)["median"])
             if opt.params:
                 self.params[key] = values
         self.events = self.events + opt.events(m0, snap, ctx, values)
@@ -233,7 +246,7 @@ class GameSession:
         if key == "child":
             self.kids += 1
         self.history.append({"turn": self.turn, "key": key, "emoji": opt.emoji, "title": opt.title,
-                             "cat": opt.cat, "delta": delta})
+                             "cat": opt.cat, "delta": delta, "base": base})
         self.prev_turn, self.turn = self.turn, self.turn + 1
         m1 = self.month_at(self.turn)
         new = self._res(m1)
@@ -265,7 +278,7 @@ class GameSession:
         while n < n_max:
             m0 = self.month_at(self.turn)
             self.history.append({"turn": self.turn, "key": STAY.key, "emoji": STAY.emoji, "title": STAY.title,
-                                 "cat": STAY.cat, "delta": None})
+                                 "cat": STAY.cat, "delta": None, "base": None})
             self.turn += 1
             n += 1
             seg = animations(plan, m0, self.month_at(self.turn), self.turn, self.played)
@@ -425,7 +438,7 @@ class GameSession:
                 # fresh game: the client plays the intro (fly-over, how to play, countdown) once
                 "intro": self.turn == 0 and not self.history and not finale}
 
-    def _hud(self, snap, ctx: Ctx | None = None, plan=None) -> dict:
+    def _hud(self, snap, ctx: Ctx | None = None, plan=None, res=None) -> dict:
         state = STATE_LABEL.get(STATE_NAMES.get(snap.state, "other"), "other")
         if snap.state == UNEMPLOYED and ctx is not None and ctx.finished and plan is not None:
             month = self.month_at(self.turn)     # no job started since the last degree (also after a gap year)
@@ -433,9 +446,15 @@ class GameSession:
             job = max((t for t, l in plan.labels if (l == "First job" or l.startswith("Job:")) and t <= month), default=-1)
             if deg > job:
                 state = "graduated · looking"
+        # "Where you stand" tile: change since the last stop (after a skip: since the station the skip started at)
+        prev = None
+        if res is not None and self.turn > 0:
+            prev = float(res.path0["net_worth"][self.month_at(min(self.prev_turn, self.turn - 1))])
         return {"name": self.avatar.get("name", "Alex"), "age": self.age_at(self.turn),
                 "net_worth": snap.net_worth, "cash": snap.cash, "portfolio": snap.portfolio, "debt": snap.debt,
-                "income": snap.income, "state": state}
+                "income": snap.income, "state": state,
+                "net_worth_prev": prev, "prev_age": None if prev is None else self.age_at(min(self.prev_turn, self.turn - 1)),
+                "expenses": snap.expenses, "health": money_health(snap)}
 
     def _cards(self, ctx: Ctx, month: int) -> tuple[list[dict], list[dict]]:
         opts = available(ctx, self.params)
@@ -448,9 +467,11 @@ class GameSession:
         for o, reason in opts:
             p = pv.get(o.key) if reason is None else None
             vals = self._values(o.key)
+            delta = None if p is None else p["median"] - base
             card = {"key": o.key, "cat": CAT_INFO[o.cat][0], "emoji": o.emoji, "title": o.title,
                     "text": o.text_for(ctx, vals), "locked": reason,
-                    "delta": None if p is None else p["median"] - base,
+                    # the card shows only the direction (green ▲ / red ▼ / grey ●); the numbers stay for the end
+                    "impact": game.impact(delta, base), "delta": delta,
                     "median": None if p is None else p["median"], "p5": None if p is None else p["p5"],
                     "p95": None if p is None else p["p95"], "credit": None if p is None else p["credit"]}
             if o.params:
@@ -502,7 +523,7 @@ class GameSession:
         skip = [dict(c) for c in SKIP_CHOICES if c.get("years", 0) <= left]
         return {"turn": self.turn, "K": self.K, "step": self.step, "start_age": self.person.age,
                 "age": self.age_at(self.turn), "end_age": self.age_at(self.K),
-                "hud": self._hud(snap, ctx, res.plan), "world": self._world(snap, False, res.plan), "categories": cats, "cards": cards,
+                "hud": self._hud(snap, ctx, res.plan, res), "world": self._world(snap, False, res.plan), "categories": cats, "cards": cards,
                 "stay": {"key": STAY.key, "title": STAY.title}, "skip": skip,
                 "quests": self._quests(snap, self._credit(res, month)),
                 "history": self._history(), "fan": self._fan(res)}
@@ -528,7 +549,8 @@ class GameSession:
         summary = {"name": self.avatar.get("name", "Alex"), "age_end": self.age_at(self.K), "score": score,
                    "stars": stars, "percentile": percentile, "decisions": len(decisions),
                    "choices": [{"age": self.age_at(h["turn"]), "emoji": h["emoji"], "title": h["title"],
-                                "cat_label": CAT_INFO[h["cat"]][1], "delta": h["delta"]}
+                                "cat_label": CAT_INFO[h["cat"]][1], "delta": h["delta"],
+                                "impact": game.impact(h["delta"], h.get("base"))}
                                for h in decisions]}
         facts = {"net_worth": final, "percentile": percentile, "p5": dist[0], "p95": dist[4],
                  "lazy_median": lazy.metrics["median_net_worth_end"],

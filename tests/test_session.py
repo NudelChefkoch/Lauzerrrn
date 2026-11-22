@@ -4,9 +4,10 @@ import re
 
 from twin.session import GameSession
 
-CARD_KEYS = {"key", "cat", "emoji", "title", "text", "locked", "delta", "median", "p5", "p95", "credit"}
+CARD_KEYS = {"key", "cat", "emoji", "title", "text", "locked", "impact", "delta", "median", "p5", "p95", "credit"}
 PREVIEW_KEYS = ("delta", "median", "p5", "p95", "credit")
-HUD_KEYS = {"name", "age", "net_worth", "cash", "portfolio", "debt", "income", "state"}
+HUD_KEYS = {"name", "age", "net_worth", "cash", "portfolio", "debt", "income", "state",
+            "net_worth_prev", "prev_age", "expenses", "health"}
 SUMMARY_KEYS = {"name", "age_end", "score", "stars", "percentile", "decisions", "choices"}
 IST = {"age": 27, "status": "employed", "income": 6000, "expenses": 4700, "rent": 1600, "cash": 12000,
        "portfolio": 8000, "debt": 0}
@@ -29,6 +30,8 @@ def check(p: dict) -> dict:
     if p["phase"] == "play":
         pl = p["play"]
         assert HUD_KEYS <= set(pl["hud"]) and pl["end_age"] == 85 and pl["step"] == 1
+        assert pl["hud"]["health"] in ("ok", "thin", "credit") and pl["hud"]["expenses"] > 0
+        assert (pl["hud"]["net_worth_prev"] is None) == (pl["turn"] == 0) == (pl["hud"]["prev_age"] is None)
         assert pl["age"] == min(pl["start_age"] + pl["turn"] * pl["step"], 85)
         assert len(pl["categories"]) == 5
         cat_keys = {c["key"] for c in pl["categories"]}
@@ -36,9 +39,13 @@ def check(p: dict) -> dict:
         for card in pl["cards"]:
             assert CARD_KEYS <= set(card) and card["cat"] in cat_keys
             if card["locked"] is not None:
-                assert all(card[k] is None for k in PREVIEW_KEYS), card
+                assert all(card[k] is None for k in PREVIEW_KEYS) and card["impact"] is None, card
             else:
                 assert all(isinstance(card[k], float) for k in PREVIEW_KEYS), card
+                # the card shows only an arrow: green ▲ better, red ▼ worse, grey ● about the same
+                assert card["impact"] in ("up", "down", "flat"), card
+                assert {"up": card["delta"] > 0, "down": card["delta"] < 0,
+                        "flat": abs(card["delta"]) < 20_000}[card["impact"]], card
             for name, prm in card.get("params", {}).items():
                 assert set(prm) == {"label", "min", "max", "step", "default", "unit", "value"}, (name, prm)
                 assert prm["min"] <= prm["value"] <= prm["max"] and (prm["value"] - prm["min"]) % prm["step"] == 0
@@ -257,3 +264,43 @@ def test_film_ride_rejects_bad_csv():
     p = s.payload()
     assert p["phase"] == "boot" and "missing columns" in p["error"]
     assert "error" not in GameSession().payload()
+
+
+def test_where_you_stand_tile_in_the_hud():
+    s = GameSession()
+    s.start(IST, AVATAR, seed=3)
+    hud = s.payload()["play"]["hud"]
+    # start: no previous station; CHF 12'000 cash < 3 x CHF 4'700 expenses -> thin buffer
+    assert hud["net_worth_prev"] is None and hud["prev_age"] is None
+    assert hud["expenses"] == 4700 and hud["health"] == "thin"
+    before = hud["net_worth"]
+    assert s.choose("stay")
+    hud = s.payload()["play"]["hud"]
+    assert hud["net_worth_prev"] == before and hud["prev_age"] == 27 and hud["age"] == 28
+    # a decision: the previous value is what the tile showed before (same random paths up to that station)
+    shown = hud["net_worth"]
+    assert s.choose("wedding")
+    assert s.payload()["play"]["hud"]["net_worth_prev"] == shown
+    # enough cash for 3 months -> buffer OK; an open loan -> on credit (a mortgage does not count)
+    s.start({**IST, "cash": 30000}, AVATAR, seed=3)
+    assert s.payload()["play"]["hud"]["health"] == "ok"
+    s.start({**IST, "cash": 30000, "debt": 5000}, AVATAR, seed=3)
+    assert s.payload()["play"]["hud"]["health"] == "credit"
+
+
+def test_card_impact_rule():
+    from twin.game import impact
+    assert impact(None) is None and impact(None, 1e6) is None
+    assert impact(50_000, 1e6) == "up" and impact(-50_000, 1e6) == "down"
+    assert impact(9_000, 1e6) == "flat" and impact(-9_000, 1e6) == "flat"           # < 1 % of the median
+    assert impact(25_000, 1e7) == "up"                                              # >= CHF 20'000 always counts
+    assert impact(500, 0.0) == "up" and impact(0.0, 1e6) == "flat"
+    # the summary keeps the numbers for the end and adds the direction
+    s = GameSession()
+    s.start(IST, AVATAR, seed=3)
+    for _ in range(3):
+        key = next(c["key"] for c in s.payload()["play"]["cards"] if c["locked"] is None and c["key"] != "costs")
+        assert s.choose(key)
+    assert s.skip(70) and s.phase == "end"
+    ch = s.payload()["end"]["summary"]["choices"]
+    assert len(ch) == 3 and all(c["impact"] in ("up", "down", "flat") and isinstance(c["delta"], float) for c in ch)

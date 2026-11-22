@@ -44,7 +44,8 @@ function toast(text, ms = 2600) { if (E.onToast) E.onToast(text, ms); }
 function setBusy(d) { const was = E.busy > 0; E.busy = Math.max(0, E.busy + d); const now = E.busy > 0; if (was !== now && E.onBusy) E.onBusy(now); }
 
 /* =================================================================== CREATOR (podium) */
-const C = { cfg: { ...DEFAULT_CFG }, cat: 'gender', ch: null, car: null, rot: 0, drag: null, podium: null };
+const C = { cfg: { ...DEFAULT_CFG }, cat: 'gender', ch: null, car: null, rot: 0, drag: null, podium: null,
+            pod: false, t: 0, waveUntil: 0 };   // pod = podium-only mode (analysis page: the twin as the agent)
 function buildCreatorScene() {
   newView(); CREATOR.scene = scene; CREATOR.camera = camera; lights(6);
   C.podium = buildPodium(); scene.add(C.podium);
@@ -53,8 +54,18 @@ function buildCreatorScene() {
 }
 function showCreator(cfg, cat) {
   if (!CREATOR.scene) buildCreatorScene();
-  activate('creator'); setCreator(cfg || C.cfg, cat || C.cat, false);
+  C.pod = false; activate('creator'); setCreator(cfg || C.cfg, cat || C.cat, false);
 }
+// Podium mode (component mode "podium"): only the character on its podium, slow idle turn + gentle bob.
+// The figure is rebuilt only when the avatar changes; wave: true lets it wave for a moment (greeting / speaking).
+function showPodium(cfg, { wave = false } = {}) {
+  if (!CREATOR.scene) buildCreatorScene();
+  const next = { ...DEFAULT_CFG, ...(cfg || {}) }, same = C.ch && !C.car && JSON.stringify(next) === JSON.stringify(C.cfg);
+  C.pod = true; activate('creator');
+  if (!same) setCreator(next, 'gender', !!C.ch);
+  if (wave) waveNow();
+}
+function waveNow(sec = 2.6) { C.waveUntil = C.t + sec; }
 function setCreator(cfg, cat, pop = true) {
   if (!CREATOR.scene) buildCreatorScene();
   const prevScene = scene; scene = CREATOR.scene;
@@ -68,10 +79,27 @@ function setCreator(cfg, cat, pop = true) {
   scene = prevScene || scene;
 }
 function updateCreator(dt) {
+  C.t += dt;
+  if (C.pod) return updatePodium(dt);
   if (C.drag === null) C.rot += dt * .35;
   const t = C.car || C.ch; if (t) t.rotation.y = C.car ? C.rot - .6 : Math.sin(C.rot) * .5;
   if (C.ch) animateCharacter(C.ch, dt);
   const cam = C.car ? [0, 2.4, 7.2] : [0, 1.7, 6.6]; camera.position.lerp(new THREE.Vector3(...cam), .08); camera.lookAt(0, C.car ? .8 : 1.15, 0);
+}
+
+function updatePodium(dt) {
+  const ch = C.ch; if (!ch) return;
+  const waving = C.t < C.waveUntil;
+  if (C.drag === null) C.rot += dt * .22;
+  // idle: slow turn left/right; while waving it faces the viewer
+  const want = waving ? 0 : Math.sin(C.rot) * .55;
+  ch.rotation.y = C.drag === null ? lerp(ch.rotation.y, want, 1 - Math.exp(-dt * 3)) : Math.sin(C.rot) * .55;
+  ch.position.y = (Math.sin(C.t * 2.1) + 1) * .03;                               // gentle bob
+  const mode = waving ? 'wave' : 'idle'; if (ch.userData.mode !== mode && (ch.userData.mode === 'idle' || ch.userData.mode === 'wave')) ch.userData.mode = mode;
+  animateCharacter(ch, dt);
+  // keep the whole podium in view in a narrow column; leave room above the head for the speech bubble
+  const aspect = Math.max(.35, E.W / Math.max(1, E.H)), dist = Math.max(6.9, 6.5 / aspect);
+  camera.position.lerp(new THREE.Vector3(0, 1.75, dist), .12); camera.lookAt(0, 1.32, 0);
 }
 
 /* =================================================================== WORLD */
@@ -1017,5 +1045,5 @@ const setBusyHandler = fn => { E.onBusy = fn; };
 const setIntroHandler = fn => { E.onIntro = fn; };
 const setRideHandler = fn => { E.onRide = fn; };
 
-export { initEngine, showCreator, setCreator, showWorld, isBusy, setToastHandler, setBusyHandler, setIntroHandler, setRideHandler,
+export { initEngine, showCreator, setCreator, showPodium, waveNow, showWorld, isBusy, setToastHandler, setBusyHandler, setIntroHandler, setRideHandler,
          skipIntro };

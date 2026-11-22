@@ -8,7 +8,8 @@ the same tools, so the demo never hangs; ``mode`` says which router was used.
 
 Tools: ``house`` (buy at age X for price Y) · ``strategy`` (investment styles side by side) · ``pillar3a`` ·
 ``savings`` · ``crisis`` (job loss / market crash) · ``drivers`` (what matters most, tornado) · ``plan`` (how am
-I doing) · ``ride`` (what the film ride / new data showed) · ``decisions`` (what I played) · ``tips`` · ``other``.
+I doing) · ``ride`` (what the film ride / new data showed) · ``decisions`` (what I played) · ``review`` (did I do
+well in the game, what could I have done better: from ``twin.review``) · ``tips`` · ``other``.
 
 Environment: ``TWIN_OLLAMA_URL`` (default http://127.0.0.1:11434), ``TWIN_OLLAMA_MODEL`` (default qwen3:4b),
 ``TWIN_OLLAMA_TIMEOUT`` (seconds for one request, default 8), ``TWIN_CHAT_PHRASE=1`` lets the model also re-phrase
@@ -39,8 +40,8 @@ MAX_YEARS = 50                       # engine horizon limit (kept conservative)
 HOUSE_PRICE = 850_000                # default price, same as the game's "Buy a home" card
 STATUS_TTL = 30.0
 STATUS_TIMEOUT = 1.0
-TOOLS = ("house", "strategy", "pillar3a", "savings", "crisis", "drivers", "plan", "ride", "decisions", "tips",
-         "other")
+TOOLS = ("house", "strategy", "pillar3a", "savings", "crisis", "drivers", "plan", "ride", "decisions", "review",
+         "tips", "other")
 TOOL_HELP = {
     "house": "Buy a house or flat (optionally at an age and for a price): net worth, range, credit risk, equity",
     "strategy": "Compare the investment styles (cash, cautious, balanced, bold) for this person",
@@ -51,6 +52,7 @@ TOOL_HELP = {
     "plan": "How am I doing overall: net worth, range, credit risk, goals",
     "ride": "What the film ride / the newly uploaded data showed",
     "decisions": "The decisions played in the game",
+    "review": "Looking back at the game: did I do well, how did I do, what could I have done better",
     "tips": "General tips: what could I do better?",
     "other": "The question is outside this financial simulation",
 }
@@ -139,6 +141,7 @@ class ChatCtx:
     name: str | None = None                          # player / avatar name
     decisions: list[dict] = field(default_factory=list)   # [{"age", "emoji", "title"}] played in the game
     ride: dict | None = None                         # film ride: {"statements": [...], "months": n, ...}
+    review: dict | None = None                       # twin.review.review(game session): verdict, timeline, ...
     sim: Callable | None = None                      # (events: tuple, years, a) -> engine.Result (e.g. cached)
     tips_fn: Callable | None = None                  # () -> tipps(...) dict
     drivers_fn: Callable | None = None               # () -> (base, rows) as twin.analysis.tornado
@@ -332,8 +335,8 @@ def plan_tool(ctx: ChatCtx) -> dict:
 def ride_tool(ctx: ChatCtx) -> dict:
     st = list((ctx.ride or {}).get("statements") or [])
     if not st:
-        return _out("ride", "You have not done the film ride yet. In the game, start with your data (or the example "
-                            "data) and I will update myself with the new months.")
+        return _out("ride", "No new monthly data has been loaded yet, so there is nothing to compare – I work with "
+                            "the status quo you entered in the game.")
     months = (ctx.ride or {}).get("months")
     head = f"The film ride with {months} months of new data showed: " if months else "The film ride showed: "
     return _out("ride", head + " ".join(str(s) for s in st[:4]), {}, {"statements": st[:4]})
@@ -345,6 +348,24 @@ def decisions_tool(ctx: ChatCtx) -> dict:
                                  "before you choose it.")
     items = ", ".join(f"{d.get('emoji', '')} {d.get('title', '')} ({d.get('age')})".strip() for d in ctx.decisions[:8])
     return _out("decisions", f"In the game you chose: {items}. Ask me about any of them, e.g. a house at another age.")
+
+
+def review_tool(ctx: ChatCtx) -> dict:
+    """Did I do well? The verdict, the biggest wins and where to do better – all from ``twin.review``."""
+    r = ctx.review
+    if not r:
+        return _out("review", "Play the game to the end first – then I can tell you how you did and what you could "
+                              "have done better.")
+    v = r["verdict"]
+    neg, pos = r.get("negatives") or [], r.get("positives") or []
+    text = f"Grade {v['grade']} – {v['title']} {v['text']}"
+    if pos:
+        text += " What went well: " + "; ".join(f"{p['icon']} {p['title']}" for p in pos[:3]) + "."
+    if neg:
+        text += " Where you could do better: " + " ".join(
+            f"{i}. {n['icon']} {n['title']} – {n['better']}" for i, n in enumerate(neg[:3], 1))
+    return _out("review", text, {}, {"grade": v["grade"], "score": v.get("score"),
+                                     "better": [n["title"] for n in neg[:3]]})
 
 
 def tips_tool(ctx: ChatCtx, n: int = 3) -> dict:
@@ -366,7 +387,8 @@ def run_tool(ctx: ChatCtx, tool: str, args: dict | None = None) -> dict:
     if tool == "crisis":
         return crisis_tool(ctx, args.get("kind") or "job")
     fn = {"strategy": strategy_tool, "pillar3a": pillar3a_tool, "savings": savings_tool, "drivers": drivers_tool,
-          "plan": plan_tool, "ride": ride_tool, "decisions": decisions_tool, "tips": tips_tool}.get(tool, other_tool)
+          "plan": plan_tool, "ride": ride_tool, "decisions": decisions_tool, "review": review_tool,
+          "tips": tips_tool}.get(tool, other_tool)
     return fn(ctx)
 
 
@@ -422,6 +444,12 @@ def parse_price(text: str) -> float | None:
 def route_offline(ctx: ChatCtx, question: str) -> tuple[str, dict]:
     """Deterministic keyword router (English + German) -> (tool, args)."""
     t = _norm(question)
+    # retrospective phrases only ("how much could I have at 65" / "wie viel habe ich mit 65" are NOT a review)
+    if _has(t, "did i do", "how did i", "did well", "done well", "done better", "have done", "could i have done",
+            "should i have", "my game", "my life review", "life review", "review", "verdict", "grade", "rate me",
+            "mistake", "habe ich gut", "habe ich richtig", "habe ich falsch", "gut gemacht", "gut gespielt",
+            "besser machen", "besser gemacht", "fehler"):
+        return "review", {}
     if _has(t, "house", "home", "flat", "apartment", "condo", "property", "real estate", "mortgage",
             "haus", "wohnung", "eigenheim", "immobilie", "hypothek", "eigentum"):
         return "house", {"age": parse_age(question, ctx.person.age), "price": parse_price(question)}
@@ -529,8 +557,27 @@ def answer(ctx: ChatCtx, question: str) -> dict:
     return {**out, "text": f"{text} {DISCLAIMER}", "mode": mode}
 
 
+def review_greeting(ctx: ChatCtx) -> dict:
+    """First message after a played game: the verdict and the 2 biggest improvements (from ``twin.review``)."""
+    who = ctx.name or ctx.person.name
+    r = ctx.review
+    v, neg = r["verdict"], (r.get("negatives") or [])[:2]
+    lines = [f"Hi {who}! I'm your financial twin and I watched your whole life. **Grade {v['grade']} – {v['title']}** "
+             f"{v['text']}"]
+    if neg:
+        lines.append("Where you could have done better:")
+        lines += [f"{i}. {n['icon']} **{n['title']}** – {n['text']} Better: {n['better']}" for i, n in enumerate(neg, 1)]
+    lines.append(f"Ask me anything, e.g. “What could I have done better?” or “What if I buy a house at "
+                 f"{max(ctx.person.age + 5, 30)}?” {DISCLAIMER}")
+    return {"text": "\n\n".join(lines), "bubble": f"Grade {v['grade']} – {v['title']}", "tool": "review",
+            "mode": "offline", "numbers": {"grade": v["grade"], "better": [n["title"] for n in neg]}}
+
+
 def greeting(ctx: ChatCtx, n: int = 3) -> dict:
-    """Proactive first message: 2–3 tips from ``tipps()`` (+ the film ride, if any). Also a short bubble text."""
+    """Proactive first message: 2–3 tips from ``tipps()`` (+ the film ride, if any). Also a short bubble text.
+    After a played game (``ctx.review``): the verdict and the 2 biggest improvements instead."""
+    if ctx.review:
+        return review_greeting(ctx)
     who = ctx.name or ctx.person.name
     tips = ctx.tips()["tips"][:max(2, min(n, 3))]
     lines = [f"Hi {who}! I'm your financial twin – I ran your numbers {ctx.years} years ahead. "
@@ -550,6 +597,10 @@ def greeting(ctx: ChatCtx, n: int = 3) -> dict:
 
 
 def suggestions(ctx: ChatCtx) -> list[str]:
+    if ctx.review:
+        return ["What could I have done better?", "Did I do well?",
+                f"What if I buy a house at {max(ctx.person.age + 5, 30)}?", "Which investment style suits me?",
+                "What if I lose my job?"]
     return [f"What if I buy a house at {max(ctx.person.age + 5, 30)}?", "Is pillar 3a worth it?",
             "Which investment style suits me?", "What if I lose my job?", "What matters most?"]
 

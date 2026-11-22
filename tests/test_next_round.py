@@ -145,7 +145,11 @@ def test_skip_years_equals_driving_on_station_by_station():
     w = pa["play"]["world"]
     assert (w["turn"], w["prev_turn"], w["skipped"]) == (5, 0, 5) and pa["play"]["turn"] == 5
     assert pb["play"]["world"]["skipped"] == 0
-    assert pa["play"]["hud"] == pb["play"]["hud"] and len(pa["play"]["history"]) == 5
+    since = ("net_worth_prev", "prev_age")             # "Where you stand": change since the last stop
+    ha, hb = pa["play"]["hud"], pb["play"]["hud"]
+    assert {k: v for k, v in ha.items() if k not in since} == {k: v for k, v in hb.items() if k not in since}
+    assert ha["prev_age"] == 30 and hb["prev_age"] == 34 and len(pa["play"]["history"]) == 5
+    assert ha["net_worth_prev"] == 30000                 # the skip started at the status quo
     assert pa["play"]["fan"] == pb["play"]["fan"]
 
 
