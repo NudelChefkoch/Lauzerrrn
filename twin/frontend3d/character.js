@@ -371,6 +371,10 @@ function finishCharacter(g, P, body, cfg, life, skin) {
   }
   const mouth = add(head, new THREE.TorusGeometry(.085, .022, 8, 18, Math.PI), M('#7a3b2e', .5), 0, -.16, .5);
   mouth.rotation.z = Math.PI;
+  // open mouth for talking (podium agent): hidden until the engine animates it
+  const mouthOpen = add(head, new THREE.SphereGeometry(.075, 16, 12), M('#5a1f1a', .6), 0, -.17, .49, 1, .55, .35);
+  mouthOpen.visible = false; mouthOpen.castShadow = false;
+  g.userData.mouth = mouth; g.userData.mouthOpen = mouthOpen;
 
   // ---------- hair (merged + cached per style/hat fit)
   const hair = fitHair(g);

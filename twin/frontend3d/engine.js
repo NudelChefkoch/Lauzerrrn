@@ -45,7 +45,7 @@ function setBusy(d) { const was = E.busy > 0; E.busy = Math.max(0, E.busy + d); 
 
 /* =================================================================== CREATOR (podium) */
 const C = { cfg: { ...DEFAULT_CFG }, cat: 'gender', ch: null, car: null, rot: 0, drag: null, podium: null,
-            pod: false, t: 0, waveUntil: 0 };   // pod = podium-only mode (analysis page: the twin as the agent)
+            pod: false, t: 0, waveUntil: 0, talkUntil: 0 };   // pod = podium-only mode (analysis page: the twin as the agent)
 function buildCreatorScene() {
   newView(); CREATOR.scene = scene; CREATOR.camera = camera; lights(6);
   C.podium = buildPodium(); scene.add(C.podium);
@@ -56,8 +56,8 @@ function showCreator(cfg, cat) {
   if (!CREATOR.scene) buildCreatorScene();
   C.pod = false; activate('creator'); setCreator(cfg || C.cfg, cat || C.cat, false);
 }
-// Podium mode (component mode "podium"): only the character on its podium, slow idle turn + gentle bob.
-// The figure is rebuilt only when the avatar changes; wave: true lets it wave for a moment (greeting / speaking).
+// Podium mode (component mode "podium"): only the character on its podium, always facing the viewer, gentle bob.
+// The figure is rebuilt only when the avatar changes; wave: true waves once (greeting), talkNow(sec) moves the mouth.
 function showPodium(cfg, { wave = false } = {}) {
   if (!CREATOR.scene) buildCreatorScene();
   const next = { ...DEFAULT_CFG, ...(cfg || {}) }, same = C.ch && !C.car && JSON.stringify(next) === JSON.stringify(C.cfg);
@@ -66,6 +66,7 @@ function showPodium(cfg, { wave = false } = {}) {
   if (wave) waveNow();
 }
 function waveNow(sec = 2.6) { C.waveUntil = C.t + sec; }
+function talkNow(sec = 3) { C.talkUntil = C.t + Math.max(.8, sec); }
 function setCreator(cfg, cat, pop = true) {
   if (!CREATOR.scene) buildCreatorScene();
   const prevScene = scene; scene = CREATOR.scene;
@@ -89,14 +90,20 @@ function updateCreator(dt) {
 
 function updatePodium(dt) {
   const ch = C.ch; if (!ch) return;
-  const waving = C.t < C.waveUntil;
-  if (C.drag === null) C.rot += dt * .22;
-  // idle: slow turn left/right; while waving it faces the viewer
-  const want = waving ? 0 : Math.sin(C.rot) * .55;
-  ch.rotation.y = C.drag === null ? lerp(ch.rotation.y, want, 1 - Math.exp(-dt * 3)) : Math.sin(C.rot) * .55;
+  const waving = C.t < C.waveUntil, talking = C.t < C.talkUntil;
+  // always faces the viewer (no turning, dragging does not rotate it)
+  ch.rotation.y = lerp(ch.rotation.y, 0, 1 - Math.exp(-dt * 6));
   ch.position.y = (Math.sin(C.t * 2.1) + 1) * .03;                               // gentle bob
   const mode = waving ? 'wave' : 'idle'; if (ch.userData.mode !== mode && (ch.userData.mode === 'idle' || ch.userData.mode === 'wave')) ch.userData.mode = mode;
   animateCharacter(ch, dt);
+  // talking: the mouth opens and closes in an irregular rhythm, the head nods a little
+  const { mouth, mouthOpen, parts } = ch.userData, head = parts && parts.head;
+  if (mouth && mouthOpen) {
+    const open = talking ? Math.max(0, Math.sin(C.t * 15) * .6 + Math.sin(C.t * 23.7) * .4) : 0;
+    mouthOpen.visible = open > .08; mouth.visible = !mouthOpen.visible;
+    mouthOpen.scale.set(1, .25 + open * .9, .35);
+  }
+  if (head) head.rotation.x = talking ? Math.sin(C.t * 6.3) * .05 : lerp(head.rotation.x, 0, .1);
   // keep the whole podium in view in a narrow column; leave room above the head for the speech bubble
   const aspect = Math.max(.35, E.W / Math.max(1, E.H)), dist = Math.max(6.9, 6.5 / aspect);
   camera.position.lerp(new THREE.Vector3(0, 1.75, dist), .12); camera.lookAt(0, 1.32, 0);
@@ -1045,5 +1052,5 @@ const setBusyHandler = fn => { E.onBusy = fn; };
 const setIntroHandler = fn => { E.onIntro = fn; };
 const setRideHandler = fn => { E.onRide = fn; };
 
-export { initEngine, showCreator, setCreator, showPodium, waveNow, showWorld, isBusy, setToastHandler, setBusyHandler, setIntroHandler, setRideHandler,
+export { initEngine, showCreator, setCreator, showPodium, waveNow, talkNow, showWorld, isBusy, setToastHandler, setBusyHandler, setIntroHandler, setRideHandler,
          skipIntro };

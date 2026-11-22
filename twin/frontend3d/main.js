@@ -1,6 +1,6 @@
 // Entry point: Streamlit bridge (component modes "game" and "podium") + standalone DEMO mode (python3 -m http.server;
 // index.html?mode=podium shows the podium mode).
-import { initEngine, setToastHandler, setBusyHandler, setIntroHandler, skipIntro, showPodium } from './engine.js';
+import { initEngine, setToastHandler, setBusyHandler, setIntroHandler, skipIntro, showPodium, talkNow } from './engine.js';
 import { DEFAULT_CFG } from './core.js';
 import { createUI } from './ui.js';
 
@@ -25,29 +25,25 @@ function gameUI() {
 }
 
 /* =================================================================== podium mode (analysis page: the twin as the agent) */
-// Only the 3D character on its podium + an optional speech bubble in the game's style. No other UI.
-const POD = { cfg: null, bubble: null, el: null, txt: null, waved: false };
+// Only the 3D character on its podium, facing the viewer. No speech bubble: the text is in the chat next to it.
+// args.bubble = the twin's latest message; when it changes the character "speaks" it (mouth moves, length ~ text).
+const POD = { cfg: null, said: null, waved: false };
 function podium(args) {
   mode = 'podium';
   document.body.dataset.screen = 'podium';
-  if (!POD.el) {
-    POD.el = document.createElement('div'); POD.el.className = 'pod-bubble'; POD.el.setAttribute('aria-live', 'polite');
-    POD.txt = document.createElement('span'); POD.txt.className = 'pb-t'; POD.el.appendChild(POD.txt);
-    document.getElementById('ui').appendChild(POD.el);
-    if (!engineOk) { const f = document.createElement('div'); f.className = 'pod-fallback'; f.textContent = '🙂'; document.getElementById('ui').appendChild(f); }
+  if (!POD.fallback && !engineOk) {
+    POD.fallback = document.createElement('div'); POD.fallback.className = 'pod-fallback'; POD.fallback.textContent = '🙂';
+    document.getElementById('ui').appendChild(POD.fallback);
   }
   const cfg = { ...DEFAULT_CFG, ...(args.avatar && typeof args.avatar === 'object' ? args.avatar : {}) };
-  const bubble = typeof args.bubble === 'string' && args.bubble.trim() ? args.bubble.trim() : null;
-  const said = bubble !== POD.bubble;
-  // waves once when it appears, and again whenever it says something new
-  if (engineOk) try { showPodium(cfg, { wave: !POD.waved || (said && !!bubble) }); } catch (e) { console.warn('[game] podium failed', e); }
-  POD.waved = true; POD.cfg = cfg;
-  if (said) {
-    POD.bubble = bubble;
-    POD.txt.textContent = bubble || '';
-    POD.el.classList.remove('on', 'pop'); void POD.el.offsetWidth;
-    if (bubble) POD.el.classList.add('on', 'pop');
-  }
+  const text = typeof args.bubble === 'string' && args.bubble.trim() ? args.bubble.trim() : null;
+  const said = text !== POD.said;
+  // waves once when it appears; talks whenever it says something new (about 14 characters per second, 1.5–9 s)
+  if (engineOk) try {
+    showPodium(cfg, { wave: !POD.waved });
+    if (said && text) talkNow(Math.min(9, Math.max(1.5, text.length / 14)));
+  } catch (e) { console.warn('[game] podium failed', e); }
+  POD.waved = true; POD.cfg = cfg; POD.said = text;
   if (!STANDALONE) {
     const h = Math.max(160, Math.round(+args.height || 420));
     if (h !== lastH) { lastH = h; post('streamlit:setFrameHeight', { height: h }); }

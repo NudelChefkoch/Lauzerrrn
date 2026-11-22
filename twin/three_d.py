@@ -33,8 +33,9 @@ def game(payload: dict, key: str = "game") -> dict | None:
 def podium(avatar: dict, bubble: str | None = None, height: int = 420, key: str = "podium") -> None:
     """Only the player's 3D character on its podium (analysis page: the twin as the agent to talk to).
 
-    Slow idle turn with a gentle bob, waves once (and again whenever ``bubble`` changes); ``bubble`` = optional
-    speech bubble above the character in the game's style. No other UI; the frame is ``height`` px high.
+    Always faces the viewer with a gentle bob and waves once. ``bubble`` = the twin's latest message: it is NOT
+    shown (the text is in the chat next to it); whenever it changes the character speaks it (mouth moves for about
+    the time it takes to read it). No other UI; the frame is ``height`` px high.
     """
     _component(mode="podium", avatar=dict(avatar or {}), bubble=bubble or None, height=int(height), key=key,
                default=None)
