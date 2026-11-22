@@ -65,3 +65,18 @@ def test_off_without_mu_se_is_the_point_estimate():
     a = simulate(no_se, [], 5, ON, 300, 1, calib=CALIB)
     b = simulate(PERSON, [], 5, OFF, 300, 1, calib=CALIB)
     assert a.metrics == b.metrics
+
+
+def test_shared_past_identical_in_every_account_series():
+    """Under fixed_until, every account series (not only net worth) is the same on all paths up to month k, even with
+    parameter uncertainty, an event in the past, random job loss and a part-timer's own seasonality group."""
+    k = 60
+    pt = next(p for p in CALIB.persons.values() if p.status == "part_time")
+    for person in (PERSON, pt):
+        res = simulate(person, [Job(start=24, salary=person.income + 400)], 10, ON, 500, 11, calib=CALIB,
+                       fixed_until=k, n_samples=500)
+        for s in ("cash", "portfolio", "debt", "liquid", "net_worth"):
+            band = res.percentiles[s][:, :k + 1]                  # p5..p95 per month
+            np.testing.assert_array_equal(band, np.broadcast_to(res.path0[s][:k + 1], band.shape))
+            np.testing.assert_allclose(res.mean[s][:k + 1], res.path0[s][:k + 1], rtol=1e-12, atol=1e-6)
+        assert res.percentiles["net_worth"][4, -1] > res.percentiles["net_worth"][0, -1]   # fans out afterwards
