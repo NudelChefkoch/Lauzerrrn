@@ -61,7 +61,9 @@ def _grad(gid: str, base: str) -> str:
 def _hair_back(a: Avatar, u: str) -> str:
     f = f"url(#{u}hair)"
     return {
-        "lang": f'<path d="M38 92 C26 150 34 190 66 192 L134 192 C166 190 174 150 162 92 Z" fill="{f}"/>',
+        # two strands left and right of the face (one closed shape under the chin reads as a beard)
+        "lang": (f'<path d="M38 92 C26 150 34 188 70 190 L80 186 C60 168 50 140 52 100 Z" fill="{f}"/>'
+                 f'<path d="M162 92 C174 150 166 188 130 190 L120 186 C140 168 150 140 148 100 Z" fill="{f}"/>'),
         "afro": f'<circle cx="100" cy="82" r="74" fill="{f}"/>',
         "pferdeschwanz": f'<ellipse cx="166" cy="118" rx="18" ry="34" transform="rotate(-18 166 118)" fill="{f}"/>',
         "dutt": f'<circle cx="100" cy="30" r="22" fill="{f}"/>',

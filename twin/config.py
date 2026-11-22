@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 
 # Life states
 STUDENT, EMPLOYED, UNEMPLOYED, SELF_EMPLOYED, OTHER = 0, 1, 2, 3, 4
+RETIRED = OTHER          # retirement uses the "other" state (calibrated from the "retired" group of the data)
 STATE_NAMES = {
     STUDENT: "student",
     EMPLOYED: "employed",

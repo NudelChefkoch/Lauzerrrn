@@ -17,7 +17,7 @@ import pandas as pd
 
 from . import game
 from .calibration import Person, calibrate
-from .config import STATE_NAMES, Assumptions
+from .config import RETIRED, STATE_NAMES, UNEMPLOYED, Assumptions
 from .game import (CATS, GAME_STRATEGY, OPTION_BY_KEY, STAY, Ctx, animations, available,
                    finished_degrees, life_span, snapshot)
 from .ist_zustand import STATUS_OPTIONS, ist_from_person, person_from_ist
@@ -31,16 +31,20 @@ DEFAULT_AVATAR = {"name": "Alex", "gender": "frau", "skin": "rosig", "hair": "la
                   "hat": "keiner", "outfit": "hoodie", "color": "violett", "car": "tuerkis"}
 
 STATE_LABEL = {"student": "in education", "employed": "employed", "unemployed": "without a job",
-               "self_employed": "self-employed", "other": "other"}
+               "self_employed": "self-employed", "other": "retired"}      # state OTHER = RETIRED in the game
 STATUS_LABEL = {"student": "in education", "employed": "employed", "part_time": "part-time",
                 "unemployed": "without a job", "self_employed": "self-employed", "retired": "retired"}
 GOAL_LABEL = {"Emergency savings": "Emergency fund", "Career transition": "Career-change cushion",
               "Education flexibility": "Education reserve", "Housing deposit": "Home down payment",
               "Long-term financial resilience": "Long-term reserve", "Retirement reserve": "Retirement reserve"}
 
+CHILD_LEFT = "Child moves out"   # plan label when a child's costs end (game.CHILD_MONTHS)
 CAT_KEYS = ["education", "career", "housing", "family", "timeoff"]   # stable ids, same order as game.CATS
 CAT_COLORS = {"education": "#2a78d6", "career": "#eb6834", "housing": "#2f9e44", "family": "#e87ba4",
               "timeoff": "#1baf7a"}
+SKIP_CHOICES = ({"years": 5, "label": "+5 years"}, {"years": 10, "label": "+10 years"},
+                {"until": "event", "label": "Next event"})
+SKIP_UNTIL_MAX = 10            # "Next event" stops after at most this many years
 
 
 def _split_cat(i: int, cat: str) -> tuple[str, str, str]:
@@ -85,13 +89,25 @@ def _play(person: Person, events: tuple, a: Assumptions, seed: int, now: int, ye
 
 
 @lru_cache(maxsize=4096)
-def _preview(person: Person, events: tuple, key: str, month: int, a: Assumptions, seed: int, years: int) -> dict:
-    snap = snapshot(_play(person, events, a, seed, month, years), month)
-    return game.preview(person, list(events), OPTION_BY_KEY[key], snap, a, calibrate(), seed, years)
+def _preview(person: Person, events: tuple, key: str, month: int, a: Assumptions, seed: int, years: int,
+             ctx: Ctx | None = None, values: tuple = ()) -> dict:
+    """Preview of option ``key`` at ``month``; ``values`` = sorted (param, value) pairs (part of the cache key)."""
+    res = _play(person, events, a, seed, month, years)
+    if key == STAY.key:                       # "drive on" = the current plan: reuse the cached run
+        assumed = game.assume_degree_jobs(list(events), month)
+        if len(assumed) != len(events):        # graduated: compare with "takes the degree job" (see game.py)
+            res = game.play(person, assumed, a, calibrate(), seed, month, years, pct_series=())
+        m = res.metrics
+        return {"median": m["median_net_worth_end"], "p5": m["p5_net_worth_end"], "p95": m["p95_net_worth_end"],
+                "credit": m["p_credit_future"]}
+    snap = snapshot(res, month)
+    return game.preview(person, list(events), OPTION_BY_KEY[key], snap, a, calibrate(), seed, years, ctx,
+                        dict(values))
 
 
 class GameSession:
-    """One player's game. Methods: start, choose, ride, restart, payload, handle, aktualisiere_mit_daten."""
+    """One player's game. Methods: start, choose, skip, set_params, ride, restart, payload, handle,
+    aktualisiere_mit_daten."""
 
     def __init__(self) -> None:
         self.calib = calibrate()
@@ -120,6 +136,8 @@ class GameSession:
         self.played: set = set()
         self.history: list[dict] = []          # {turn, key, emoji, title, cat, delta}
         self.anims: list[dict] = []
+        self.skipped = 0                       # stations driven by the last step (0 = normal step, n = skip)
+        self.params: dict[str, dict] = {}      # chosen card values {key: {param: value}} (clamped/snapped)
         self.step, self.K, self.total = life_span(20)
         self.ride_data: dict | None = None     # film ride: stations from later data + updated statements
         self.data_person: Person | None = None  # person updated with the film-ride data (used by the analysis)
@@ -145,6 +163,19 @@ class GameSession:
     def _res(self, month: int | None = None):
         month = self.month_at(self.turn) if month is None else month
         return _play(self.person, tuple(self.events), self.assumptions, self.seed, month, self.total)
+
+    def _values(self, key: str) -> dict:
+        return OPTION_BY_KEY[key].values(self.params.get(key))
+
+    def set_params(self, key: str, params) -> bool:
+        """Store chosen card values (clamped to min/max, snapped to the step). False if nothing applies."""
+        opt = OPTION_BY_KEY.get(key)
+        if opt is None or not opt.params or not isinstance(params, dict):
+            return False
+        cur = dict(self.params.get(key, {}))
+        cur.update({n: opt.params[n].snap(v) for n, v in params.items() if n in opt.params})
+        self.params[key] = opt.values(cur)
+        return True
 
     def _ctx(self, res, month: int) -> Ctx:
         return Ctx(snapshot(res, month), frozenset(self.done), self.age_at(self.turn), self.kids,
@@ -175,21 +206,27 @@ class GameSession:
         self.phase = "play"
         self._changed()
 
-    def choose(self, key: str) -> bool:
-        """Play one station with option ``key`` (or 'stay'). Returns False if the move is not allowed."""
+    def choose(self, key: str, params: dict | None = None) -> bool:
+        """Play one station with option ``key`` (or 'stay'). ``params`` = chosen card values (fallback: the stored
+        ones, then the defaults). Returns False if the move is not allowed."""
         if self.phase != "play" or key not in OPTION_BY_KEY:
             return False
         opt = OPTION_BY_KEY[key]
         m0 = self.month_at(self.turn)
         res = self._res(m0)
         snap = snapshot(res, m0)
+        ctx = self._ctx(res, m0)
+        values = opt.values({**self.params.get(key, {}), **(params if isinstance(params, dict) else {})})
         delta = None
         if key != "stay":
-            locks = dict((o.key, r) for o, r in available(self._ctx(res, m0)))
-            if locks.get(key) is not None:
+            if opt.reason(ctx, values) is not None:
                 return False
-            delta = self._delta(key, m0)
-        self.events = self.events + opt.make(m0, snap)
+            if self._preview(key, m0, ctx, values).get("house_failed"):
+                return False                     # the purchase would fail in the played life (see game.preview)
+            delta = self._delta(key, m0, ctx, values)
+            if opt.params:
+                self.params[key] = values
+        self.events = self.events + opt.events(m0, snap, ctx, values)
         if key != "stay":
             self.done.add(key)
             self.badges[self.turn] = opt.emoji
@@ -201,6 +238,46 @@ class GameSession:
         m1 = self.month_at(self.turn)
         new = self._res(m1)
         self.anims = animations(new.plan, m0, m1, self.turn, self.played)
+        self.skipped = 0
+        if self.turn >= self.K:
+            self.phase = "end"
+        self._changed()
+        return True
+
+    def skip(self, years: int | None = None, until: str | None = None) -> bool:
+        """Drive on for ``years`` stations in one step (= n x choose('stay')), stopping at the end of life.
+        ``until='event'``: stop at the next station where a planned event happens (degree finished, child moves
+        out, forced retirement, ...) or after 10 years. Returns False if the move is not allowed."""
+        if self.phase != "play":
+            return False
+        if until == "event":
+            n_max = SKIP_UNTIL_MAX
+        else:
+            try:
+                n_max = int(years)
+            except (TypeError, ValueError):
+                return False
+            if n_max < 1:
+                return False
+        n_max = min(n_max, self.K - self.turn)
+        plan = self._res(self.month_at(self.turn)).plan     # events do not change: same plan for every station
+        start, anims, n = self.turn, [], 0
+        while n < n_max:
+            m0 = self.month_at(self.turn)
+            self.history.append({"turn": self.turn, "key": STAY.key, "emoji": STAY.emoji, "title": STAY.title,
+                                 "cat": STAY.cat, "delta": None})
+            self.turn += 1
+            n += 1
+            seg = animations(plan, m0, self.month_at(self.turn), self.turn, self.played)
+            for a in seg:
+                a["turn"] = self.turn        # station where it happened: the engine's drive pauses there
+            anims += seg
+            if until == "event" and seg:
+                break
+        if n >= 2:
+            for a in anims:
+                a["brief"] = True
+        self.prev_turn, self.anims, self.skipped = start, anims, n
         if self.turn >= self.K:
             self.phase = "end"
         self._changed()
@@ -297,8 +374,16 @@ class GameSession:
             if self.phase == "ride" and self.ride_data:
                 self.start(self.ride_data["ist"], self.avatar)
         elif action == "choose":
-            if not self.choose(str(value.get("key", ""))):
+            params = value.get("params") if isinstance(value.get("params"), dict) else None
+            if not self.choose(str(value.get("key", "")), params):
                 # rejected move: nothing changes, but bump seq so the client's waiting overlay clears
+                self._changed()
+        elif action == "card_params":                 # adjust a card's values: lock, preview and text follow
+            self.set_params(str(value.get("key", "")), value.get("params"))
+            self._changed()
+        elif action == "skip":
+            until = "event" if value.get("until") == "event" else None
+            if not self.skip(value.get("years"), until):
                 self._changed()
         elif action == "restart":
             self.restart()
@@ -307,11 +392,13 @@ class GameSession:
         return None
 
     # ------------------------------------------------------------ payload pieces
-    def _preview(self, key: str, month: int) -> dict:
-        return _preview(self.person, tuple(self.events), key, month, self.assumptions, self.seed, self.total)
+    def _preview(self, key: str, month: int, ctx: Ctx | None = None, values: dict | None = None) -> dict:
+        vals = tuple(sorted(OPTION_BY_KEY[key].values(values).items()))
+        return _preview(self.person, tuple(self.events), key, month, self.assumptions, self.seed, self.total,
+                        ctx, vals)
 
-    def _delta(self, key: str, month: int) -> float:
-        return float(self._preview(key, month)["median"] - self._preview("stay", month)["median"])
+    def _delta(self, key: str, month: int, ctx: Ctx | None = None, values: dict | None = None) -> float:
+        return float(self._preview(key, month, ctx, values)["median"] - self._preview("stay", month)["median"])
 
     def _boot_block(self) -> dict:
         if self._boot is None:
@@ -320,36 +407,55 @@ class GameSession:
             example = {"id": p.profile_id, "name": p.name, "age": p.age, "status": STATUS_LABEL.get(p.status, p.status),
                        "ist": ist_from_person(p)}
             statuses = [{"key": k, "label": v} for k, v in STATUS_OPTIONS.items()]
-            self._boot = _clean({"example": example, "statuses": statuses, "retire_age": game.RETIRE_AGE})
+            self._boot = _clean({"example": example, "statuses": statuses, "retire_age": game.RETIRE_AGE,
+                                 "retire_from": game.RETIRE_FROM, "forced_retire_age": game.FORCED_RETIRE_AGE,
+                                 "end_age": game.END_AGE})
         return self._boot
 
-    def _world(self, snap, finale: bool) -> dict:
+    def _world(self, snap, finale: bool, plan=None) -> dict:
+        month = self.month_at(self.turn)
+        left = sum(1 for t, l in (plan.labels if plan is not None else ()) if l == CHILD_LEFT and t <= month)
         return {"avatar": dict(self.avatar), "turn": self.turn, "prev_turn": self.prev_turn,
                 "start_age": self.person.age, "K": self.K, "step": self.step, "labels": self._ages(),
                 "badges": {str(k): v for k, v in self.badges.items()},
-                "life": {"suit": snap.state == 1, "kids": self.kids, "partner": "wedding" in self.done},
-                "anims": list(self.anims), "finale": finale,
+                # kids = children born; kids_home = still at home (each moves out at 18); retired -> grey + cane
+                "life": {"suit": snap.state == 1, "kids": self.kids, "kids_home": max(self.kids - left, 0),
+                         "partner": "wedding" in self.done, "retired": snap.state == RETIRED},
+                "anims": list(self.anims), "finale": finale, "skipped": self.skipped,
                 # fresh game: the client plays the intro (fly-over, how to play, countdown) once
                 "intro": self.turn == 0 and not self.history and not finale}
 
-    def _hud(self, snap) -> dict:
+    def _hud(self, snap, ctx: Ctx | None = None, plan=None) -> dict:
+        state = STATE_LABEL.get(STATE_NAMES.get(snap.state, "other"), "other")
+        if snap.state == UNEMPLOYED and ctx is not None and ctx.finished and plan is not None:
+            month = self.month_at(self.turn)     # no job started since the last degree (also after a gap year)
+            deg = max((t for t, l in plan.labels if l in game.DEGREE_LABELS and t <= month), default=-1)
+            job = max((t for t, l in plan.labels if (l == "First job" or l.startswith("Job:")) and t <= month), default=-1)
+            if deg > job:
+                state = "graduated · looking"
         return {"name": self.avatar.get("name", "Alex"), "age": self.age_at(self.turn),
                 "net_worth": snap.net_worth, "cash": snap.cash, "portfolio": snap.portfolio, "debt": snap.debt,
-                "income": snap.income, "state": STATE_LABEL.get(STATE_NAMES.get(snap.state, "other"), "other")}
+                "income": snap.income, "state": state}
 
     def _cards(self, ctx: Ctx, month: int) -> tuple[list[dict], list[dict]]:
-        opts = available(ctx)
+        opts = available(ctx, self.params)
         open_keys = [o.key for o, r in opts if r is None]
-        pv = {k: self._preview(k, month) for k in open_keys + ["stay"]}
+        pv = {k: self._preview(k, month, ctx, self.params.get(k)) for k in open_keys}
+        pv["stay"] = self._preview("stay", month)
+        opts = [(o, game.HOUSE_FAILED if r is None and pv[o.key].get("house_failed") else r) for o, r in opts]
         base = pv["stay"]["median"]
         cards = []
         for o, reason in opts:
-            p = pv.get(o.key)
-            cards.append({"key": o.key, "cat": CAT_INFO[o.cat][0], "emoji": o.emoji, "title": o.title, "text": o.text,
-                          "locked": reason,
-                          "delta": None if p is None else p["median"] - base,
-                          "median": None if p is None else p["median"], "p5": None if p is None else p["p5"],
-                          "p95": None if p is None else p["p95"], "credit": None if p is None else p["credit"]})
+            p = pv.get(o.key) if reason is None else None
+            vals = self._values(o.key)
+            card = {"key": o.key, "cat": CAT_INFO[o.cat][0], "emoji": o.emoji, "title": o.title,
+                    "text": o.text_for(ctx, vals), "locked": reason,
+                    "delta": None if p is None else p["median"] - base,
+                    "median": None if p is None else p["median"], "p5": None if p is None else p["p5"],
+                    "p95": None if p is None else p["p95"], "credit": None if p is None else p["credit"]}
+            if o.params:
+                card["params"] = {n: prm.spec(vals[n]) for n, prm in o.params.items()}
+            cards.append(card)
         cats = []
         for c in CATS:
             key, label, emoji = CAT_INFO[c]
@@ -392,10 +498,12 @@ class GameSession:
         snap = snapshot(res, month)
         ctx = self._ctx(res, month)
         cats, cards = self._cards(ctx, month)
+        left = self.K - self.turn
+        skip = [dict(c) for c in SKIP_CHOICES if c.get("years", 0) <= left]
         return {"turn": self.turn, "K": self.K, "step": self.step, "start_age": self.person.age,
                 "age": self.age_at(self.turn), "end_age": self.age_at(self.K),
-                "hud": self._hud(snap), "world": self._world(snap, False), "categories": cats, "cards": cards,
-                "stay": {"key": STAY.key, "title": STAY.title},
+                "hud": self._hud(snap, ctx, res.plan), "world": self._world(snap, False, res.plan), "categories": cats, "cards": cards,
+                "stay": {"key": STAY.key, "title": STAY.title}, "skip": skip,
                 "quests": self._quests(snap, self._credit(res, month)),
                 "history": self._history(), "fan": self._fan(res)}
 
@@ -409,7 +517,7 @@ class GameSession:
         lazy = _play(self.person, (), self.assumptions, self.seed, 0, self.total)
         dist = possible.percentiles["net_worth"][:, -1]
         percentile = int(round(float(np.interp(final, dist, [5, 25, 50, 75, 95]))))
-        score = int(round(max(final, 0) / 1000))                  # net worth at retirement in k CHF
+        score = int(round(max(final, 0) / 1000))                  # net worth at the end (85) in k CHF
         stars = int(min(5, 1 + percentile // 20))
         credit_path = p0["cash"] + p0["portfolio"] - p0["liquid"]
         decisions = [h for h in self.history if h["key"] != "stay"]
@@ -433,7 +541,7 @@ class GameSession:
                          "p95": [pct[4, m] for m in yearly], "lazy": [lazy_pct[2, m] for m in yearly],
                          "now_index": self.K},
                  "disclaimer": DISCLAIMER}
-        return {"world": self._world(snap, True), "summary": summary, "facts": facts}
+        return {"world": self._world(snap, True, mine.plan), "summary": summary, "facts": facts}
 
     def _ride_block(self) -> dict:
         r = self.ride_data

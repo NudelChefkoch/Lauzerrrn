@@ -1,0 +1,50 @@
+/* Life chart (after Juli's financial-twin chart.js): canvas with hover readout, two life paths, event markers. */
+:root {
+  --ink: #1f2328; --muted: #626661; --grid: #e9e9e4; --zero: #c9cac3; --bg: transparent; --panel: #f5f5f1;
+  --seg: #f1f1ed; --seg-on: #ffffff; --seg-line: #e5e5df; --tip-bg: #27292a; --tip-ink: #efefec;
+  --plan: #2a78d6; --comp: #eb6834; --life: #6b7280; --event: #c91d30;
+  --font: "Source Sans Pro", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+:root[data-theme="dark"] {
+  --ink: #fafafa; --muted: #a3a8b4; --grid: rgba(255,255,255,.08); --zero: rgba(255,255,255,.28);
+  --panel: rgba(255,255,255,.06); --seg: rgba(255,255,255,.07); --seg-on: rgba(255,255,255,.16);
+  --seg-line: rgba(255,255,255,.14); --tip-bg: #f2f2ef; --tip-ink: #27292a;
+  --plan: #5b9cf0; --comp: #f08a5d; --life: #9ca3af; --event: #ff6b7d;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font); }
+.lc { padding: 2px 2px 6px; }
+.lc-controls { display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: space-between; align-items: center;
+  margin-bottom: 6px; }
+.lc-seg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 9px; background: var(--seg); }
+.lc-seg button { min-height: 30px; padding: 4px 11px; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--muted); font: 600 .84rem var(--font); cursor: pointer; }
+.lc-seg button:hover { color: var(--ink); }
+.lc-seg button[aria-pressed="true"] { background: var(--seg-on); border-color: var(--seg-line); color: var(--ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
+.lc-seg button:focus-visible, .lc-canvas:focus-visible { outline: 2px solid var(--plan); outline-offset: 2px; }
+.lc-toggle { display: inline-flex; gap: 7px; align-items: center; color: var(--muted); font-size: .84rem; cursor: pointer; }
+.lc-toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--plan); cursor: pointer; }
+.lc-wrap { position: relative; }
+.lc-canvas { display: block; width: 100%; height: 330px; touch-action: pan-y; border-radius: 4px; }
+.lc-tip { position: absolute; z-index: 2; width: max-content; max-width: 290px; padding: 9px 11px; border-radius: 8px;
+  color: var(--tip-ink); background: var(--tip-bg); box-shadow: 0 3px 10px rgb(0 0 0 / 16%); pointer-events: none;
+  font-size: .8rem; line-height: 1.5; }
+.lc-tip strong, .lc-tip span { display: block; }
+.lc-tip i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; vertical-align: 0; }
+.lc-tip em { display: block; margin-top: 3px; font-style: normal; opacity: .85; }
+.lc-tip .d { opacity: .8; }
+.lc-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 4px; color: var(--muted);
+  font-size: .8rem; }
+.lc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lc-legend .ln { width: 19px; border-top: 2.5px solid var(--plan); }
+.lc-legend .ln.comp { border-top: 2px dashed var(--comp); }
+.lc-legend .ln.life { border-top: 1.5px solid var(--life); }
+.lc-legend .bd { width: 19px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--plan) 22%, transparent); }
+.lc-legend .bd.comp { background: color-mix(in srgb, var(--comp) 20%, transparent); }
+.lc-legend .ev { width: 8px; height: 8px; border-radius: 50%; background: var(--event); }
+.lc-summary { margin: 10px 0 0; padding: 9px 12px; border-radius: 7px; background: var(--panel); color: var(--ink);
+  font-size: .86rem; line-height: 1.45; }
+.lc-summary:empty { display: none; }
+.lc-vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 520px) { .lc-canvas { height: 260px; } }

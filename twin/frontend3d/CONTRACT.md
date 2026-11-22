@@ -138,3 +138,72 @@ Every value carries a strictly increasing `nonce` (use `Date.now()`); Python ign
   tab "💡 Tips & investing" (`twin/tipps.py`): rule-based tips + cash / cautious / balanced / bold compared.
 - **Engine**: no countdown in the intro; buildings take free spots (`spot()` avoids earlier buildings – fixes the office of
   the first job landing inside the university); house purchase = UBS branch + mortgage, then the house lands.
+
+
+## Update: next round (gap year, skip, retire option, adjustable cards)
+Binding for Python (`twin/session.py`, `twin/game.py`), the engine and the UI. Category keys unchanged
+(`education | career | housing | family | timeoff`), all labels English.
+
+- **Graduation does not start a job.** Bachelor / master / apprenticeship end in "graduated / looking" = state
+  `unemployed` without unemployment benefits (no ALV), income 0 (side income ends); `hud.state` = `"graduated · looking"`
+  from the station where the degree is finished. A finished degree emits ONLY `{"type": "graduation", "label": "<degree>"}`
+  (no extra `job` anim).
+- **New card `grad_job`** (cat `career`, 💼, "Job after your degree"): text names the salary of the best degree
+  (master CHF 6'300 / bachelor CHF 5'200 / apprenticeship CHF 5'000; own flat +1'000 / +800 / +600 a month). Locked:
+  "Finish a degree first" (no degree), "You are studying right now", "You already have a job", "You are retired".
+  Taking it → anim `{"type": "job", "label": "First job!"}`. "Entry job" (`job_start`) stays available too.
+  Repeatable (`once` = false): a master after a bachelor job ends "graduated / looking" again and offers the master job.
+- **Time off = only `gap_year`** (🎒, "Gap year", "12 months off without pay"; `travel`, `sabbatical3`, `sabbatical12`
+  removed). Employed → 12 months without pay, then the same job. Graduated / looking (or any other state) → 12 months
+  without income, afterwards as before (still looking: `grad_job` stays available). Anim `{"type": "gapyear", "label": "Gap year"}`.
+  Not while studying or retired; can be taken again (`once` = false).
+- **Retire is a card** `retire` (cat `career`, 🪑, "Retire", "AHV + pension fund: about 60 % of your last salary").
+  Locked "From age 60" before 60, "Already retired" afterwards. Effect: income = 60 % of the last salary (at least the AHV
+  minimum CHF 1'260) for the rest of life, expenses unchanged; state RETIRED (= `config.OTHER` = 4, the data's "retired"
+  group; `config.RETIRED` is an alias), `hud.state` = `"retired"`. Career / education / gap-year cards then say
+  "You are retired". Anim `{"type": "retirement", "label": "Retired!"}` mid-game – the game goes on.
+  Not chosen by 70 → forced retirement at 70 (same effect, plan label "Retirement", anim `{"type": "retirement",
+  "label": "Retirement"}`).
+- **Life runs to 85**: `game.life_span(age)` → `(1, K, K)` with `K = min(85 − age, 70)` stations (one station = one year);
+  `play.end_age` = `summary.age_end` = 85; `engine.simulate` accepts up to 70 years (`engine.MAX_YEARS`). The end (phase
+  `end`, life summary, `world.finale: true`) is at 85; `summary.score` = net worth at 85 in k CHF.
+  `boot` gains `end_age: 85`, `retire_from: 60`, `forced_retire_age: 70`; `boot.retire_age` stays 65 (statutory AHV age,
+  horizon of the film ride's statements).
+- **Adjustable cards** – a card MAY carry `params` (only cards that have values carry the key):
+  `"params": {"<name>": {"label", "min", "max", "step", "default", "unit", "value"}}`, `value` = the current chosen value.
+  | card | param | label | min | max | step | default |
+  |---|---|---|---|---|---|---|
+  | `buy_house` | `price` | Price | 400'000 | 2'000'000 | 50'000 | 850'000 |
+  | `child` | `cost` | Cost per month | 300 | 3'000 | 100 | 1'100 |
+  | `costs` | `delta` | Change per month | −2'000 | 2'000 | 100 | −300 |
+  Lock, preview (`median/p5/p95/credit/delta`) and `text` follow the chosen values (house: down payment 20 % + 2 % fees
+  of the chosen price at that year's price level, plus one month of costs, vs. liquid money; text shows the price in
+  today's CHF). If the purchase would still fail in the played life (path 0: the market moved that month) the card is
+  locked "Down payment not enough this year (prices and markets move)" and `choose` is rejected – no house anim for a
+  purchase the twin never makes.
+- **Child**: CHF 3'000 at birth, then `cost` per month for 216 months (until 18) – `ExpenseChange(months=216)`. At +216
+  months anim `{"type": "child_leaves", "label": "Your child moves out"}`. At most 2 children, age 22–50.
+- **New card `costs`** (cat `housing`, 🧾, "Adjust monthly costs", repeatable): `ExpenseChange(t, delta, "Monthly costs")`
+  from now on. Locked "Pick a change first" (delta 0) or "Costs can't go below CHF 500/month". Note: an uploaded CSV is
+  only the PAST net flow per month; future costs come from the status quo (start form) and the decisions in the game.
+- **Skip**: `play.skip = [{"years": 5, "label": "+5 years"}, {"years": 10, "label": "+10 years"},
+  {"until": "event", "label": "Next event"}]` (entries with more years than are left are omitted).
+  After a skip: `world.prev_turn` = turn before the skip, `world.turn` = new turn, `world.skipped` = n stations driven
+  (0 for a normal step; present in `play.world` and `end.world`) – the engine drives all stations in one go.
+  `world.anims` holds the anims of all skipped years (ids unique), each with `"brief": true` when `skipped >= 2`.
+  "Next event" stops at the first station with an animated event (degree, child moves out, forced retirement, …), at most 10 years.
+  Anims of a skip also carry `"turn": <station where it happened>` (prev_turn < turn ≤ world.turn): the engine's drive
+  pauses there for the short version; without `turn` the short anims play at the end of the drive.
+- **`world.life`** gains `kids_home` (children still at home; `kids` stays the number born – each child moves out at 18)
+  and `retired` (true from retirement on: grey hair, cane, also when the world is rebuilt). Both are authoritative for
+  the engine; older payloads without them still work (the engine then counts `child_leaves` anims).
+
+### JS → Python (new / extended actions, all with `nonce`, deduped)
+- `{"action": "card_params", "key": "buy_house", "params": {"price": 600000}, "nonce": n}` – stores the values in the
+  session (clamped to min/max, snapped to step), recomputes that card's lock / preview / text, bumps `seq` (also when the
+  key is unknown, so the waiting overlay clears).
+- `{"action": "choose", "key": "child", "params": {"cost": 1500}, "nonce": n}` – `params` optional; fallback: the stored
+  values, then the defaults. The values used are remembered for the card.
+- `{"action": "skip", "years": 5, "nonce": n}` (years ≥ 1, clipped to the end of life) or
+  `{"action": "skip", "until": "event", "nonce": n}` = n × `choose("stay")` in one step. A rejected skip (game over,
+  years < 1) changes nothing but bumps `seq`.

@@ -11,12 +11,14 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .calibration import Calibration, Person
-from .config import Assumptions, STUDENT, EMPLOYED, UNEMPLOYED, SELF_EMPLOYED, STATE_NAMES
+from .config import Assumptions, STUDENT, EMPLOYED, UNEMPLOYED, SELF_EMPLOYED, RETIRED, STATE_NAMES
 
 
 @dataclass(frozen=True)
 class Study:
-    """Study for ``months`` months; afterwards employed with ``salary_after``."""
+    """Study for ``months`` months; afterwards employed with ``salary_after`` – or, with ``job_after=False``,
+    "graduated / looking": without a job, income 0 and no unemployment benefits (the game lets the player pick
+    the first job or a gap year)."""
     start: int
     months: int
     tuition_per_year: float = 8000.0       # S001 assumption
@@ -25,6 +27,7 @@ class Study:
     expenses_after: float = 0.0            # lifestyle change per month once working
     label: str = "Study"
     end_label: str = "First job"
+    job_after: bool = True                 # False: no automatic job after the degree (graduated / looking)
 
 
 @dataclass(frozen=True)
@@ -46,8 +49,9 @@ class JobChange:
 @dataclass(frozen=True)
 class Unemployment:
     start: int
-    months: int                            # afterwards back to the previous salary
+    months: int                            # afterwards back to the previous state and salary
     label: str = "Unemployed"
+    alv: bool = True                       # False: no unemployment benefits (gap year: income 0)
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,18 @@ class ExpenseChange:
     start: int
     amount: float                          # change of monthly expenses from this month on (+ = more)
     label: str = "Expenses"
+    months: int | None = None              # None = for good; else the change ends after this many months
+    end_label: str | None = None           # label at the end month (e.g. "Child moves out")
+
+
+@dataclass(frozen=True)
+class Retirement:
+    """Retire: from this month on the state is RETIRED and the income is ``rate`` x the last salary
+    (AHV + pension fund, simplified), at least ``minimum`` (AHV minimum pension). Expenses stay unchanged."""
+    start: int
+    rate: float = 0.60
+    label: str = "Retired"
+    minimum: float = 1260.0
 
 
 @dataclass(frozen=True)
@@ -96,7 +112,7 @@ class StrategyChange:
 
 
 Event = (Study | Job | JobChange | Unemployment | SelfEmployment | HouseBuy | OneOff
-         | ExpenseChange | MarketCrash | StrategyChange)
+         | ExpenseChange | MarketCrash | StrategyChange | Retirement)
 
 
 @dataclass
@@ -136,6 +152,9 @@ def build_plan(person: Person, events: list[Event], months: int,
         years = np.arange(T - t0) / 12.0
         return salary * (1 + g) ** years
 
+    if person.state == EMPLOYED:          # someone already employed gets the same career growth as a new job
+        income[:] = career(0, person.income)
+
     def set_from(t0: int, s: int, inc: np.ndarray | float) -> None:
         state[t0:] = s
         income[t0:] = inc
@@ -153,9 +172,12 @@ def build_plan(person: Person, events: list[Event], months: int,
             set_from(t0, STUDENT, side * (1 + a.macro.student_income_growth) ** (np.arange(T - t0) / 12))
             extra_cost[t0:t1] += ev.tuition_per_year / 12
             if t1 < T:
-                sal = ev.salary_after if ev.salary_after is not None else calib.young_salary
-                set_from(t1, EMPLOYED, career(t1, sal))
-                extra_exp[t1:] += ev.expenses_after
+                if ev.job_after:
+                    sal = ev.salary_after if ev.salary_after is not None else calib.young_salary
+                    set_from(t1, EMPLOYED, career(t1, sal))
+                    extra_exp[t1:] += ev.expenses_after
+                else:                              # graduated / looking: no job, no ALV, side income ends
+                    set_from(t1, UNEMPLOYED, 0.0)
                 labels.append((t1, ev.end_label))
         elif isinstance(ev, Job):
             sal = ev.salary if ev.salary is not None else calib.young_salary
@@ -171,15 +193,15 @@ def build_plan(person: Person, events: list[Event], months: int,
             if t1 < T:
                 set_from(t1, EMPLOYED, career(t1, prev * (1 + ev.raise_pct)))
         elif isinstance(ev, Unemployment):
-            prev_state = state[t0 - 1] if t0 > 0 else person.state
+            prev_state = state[t0:].copy()
             prev_income = income[t0:].copy()
             t1 = min(T, t0 + ev.months)
             last = income[t0 - 1] if t0 > 0 else person.income
             state[t0:t1] = UNEMPLOYED
-            income[t0:t1] = a.social.alv_rate * last
-            alv_applies[t0:t1] = True
+            income[t0:t1] = a.social.alv_rate * last if ev.alv else 0.0
+            alv_applies[t0:t1] = ev.alv
             if t1 < T:
-                state[t1:] = prev_state
+                state[t1:] = prev_state[t1 - t0:]
                 income[t1:] = prev_income[t1 - t0:]
         elif isinstance(ev, SelfEmployment):
             inc = ev.income if ev.income is not None else calib.states[SELF_EMPLOYED].income
@@ -190,7 +212,17 @@ def build_plan(person: Person, events: list[Event], months: int,
         elif isinstance(ev, OneOff):
             extra_cost[t0] += ev.amount
         elif isinstance(ev, ExpenseChange):
-            extra_exp[t0:] += ev.amount
+            t1 = T if ev.months is None else min(T, t0 + max(0, int(ev.months)))
+            extra_exp[t0:t1] += ev.amount
+            if ev.months is not None and ev.end_label and t1 < T:
+                labels.append((t1, ev.end_label))
+        elif isinstance(ev, Retirement):
+            worked = np.nonzero(np.isin(state[:t0], (EMPLOYED, SELF_EMPLOYED)) & (income[:t0] > 0))[0]
+            if len(worked):
+                base = float(income[worked[-1]])
+            else:
+                base = person.income if person.state in (EMPLOYED, SELF_EMPLOYED) else 0.0
+            set_from(t0, RETIRED, max(ev.rate * base, ev.minimum))
         elif isinstance(ev, MarketCrash):
             crashes.append(ev)
         elif isinstance(ev, StrategyChange):

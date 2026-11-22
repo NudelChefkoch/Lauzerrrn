@@ -56,6 +56,27 @@ function profileEmoji(status, i) {
   return ['🙂', '😎', '🤓', '😄', '🥳', '😌'][i % 6];
 }
 const SWATCH = { skin: SKINS, hairColor: HAIRC, color: COLORS, car: COLORS };
+// adjustable card parameters (card.params = {name: {label, min, max, step, default, unit, value}})
+function paramList(c) {
+  const ps = c && c.params && typeof c.params === 'object' ? c.params : null;
+  return ps ? Object.entries(ps).filter(([, p]) => p && typeof p === 'object' && Number.isFinite(+p.min) && Number.isFinite(+p.max) && +p.max > +p.min) : [];
+}
+function snapParam(p, v) {
+  const lo = +p.min, hi = +p.max, step = num(p.step, 0) > 0 ? +p.step : 1;
+  const x = clamp(num(v, num(p.default, lo)), lo, hi);
+  const k = Math.round((x - lo) / step), d = (String(step).split('.')[1] || '').length;
+  return clamp(+(lo + k * step).toFixed(d), lo, hi);
+}
+const isChf = p => /chf/i.test(String(p.unit || ''));
+function fmtParam(p, v) {
+  if (isChf(p)) return num(p.min) < 0 ? chfSigned(v) : chf(v);
+  const u = p.unit ? ' ' + p.unit : '';
+  return (num(p.min) < 0 ? signed(v) : grp(v)) + u;
+}
+function fmtParamShort(p, v) {
+  const s = num(v) < -0.5 ? '−' : (num(p.min) < 0 && num(v) > 0.5 ? '+' : '');
+  return s + kfmt(Math.abs(num(v)));
+}
 const CATS = Object.keys(OPTIONS);
 
 /* =================================================================== fan chart (canvas) */
@@ -99,14 +120,18 @@ export function drawFan(cv, fan, opt = {}) {
     g.beginPath(); g.moveTo(L, y); g.lineTo(W - R, y); g.stroke();
     g.fillStyle = '#6b6394'; g.fillText(kfmt(t), L - 6, y);
   }
-  // x labels
+  // x labels: first, last and "now" first, then round ages (every 1/2/5/10/20 years, whatever fits the width)
   g.textAlign = 'center'; g.fillStyle = '#6b6394';
-  const xl = new Set([0, n - 1]); if (ni > 0 && ni < n - 1) xl.add(ni);
-  if (!small) for (let i = 0; i < n; i += Math.max(1, Math.round(n / 6))) xl.add(i);
+  const gap = small ? 30 : 40, a0 = num(ages[0]), a1 = num(ages[n - 1]), span = Math.max(1, a1 - a0);
+  const every = [1, 2, 5, 10, 20, 50].find(e => (W - L - R) * e / span >= gap * 1.15) || 50;
+  const prio = [0, n - 1]; if (ni > 0 && ni < n - 1) prio.push(ni);
+  for (let i = 1; i < n - 1; i++) if (Number.isFinite(+ages[i]) && Math.round(+ages[i]) % every === 0) prio.push(i);
   const used = [];
-  for (const i of [...xl].sort((a, b) => a - b)) {
-    const x = X(i); if (used.some(u => Math.abs(u - x) < (small ? 30 : 34))) continue; used.push(x);
-    g.fillText(`${num(ages[i])} y`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
+  for (const i of prio) {
+    const x = X(i); if (used.some(u => Math.abs(u - x) < gap)) continue; used.push(x);
+    g.fillStyle = '#d9d2f5'; g.fillRect(Math.round(x) - .5, H - B, 1, 4);
+    g.fillStyle = i === ni && ni < n - 1 ? '#ff3d8b' : '#6b6394';
+    g.fillText(`${num(ages[i])}${small ? '' : ' y'}`, clamp(x, L + 10, W - R - 12), H - B / 2 + 2);
   }
   const line = (a, from, to, color, width, dash = [], outline = 0) => {
     const pts = []; for (let i = from; i <= to; i++) if (a[i] !== null) pts.push([X(i), Y(a[i])]);
@@ -149,6 +174,9 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     ist: null, istBuilt: false, styleHinted: false, selCat: null, trayOpen: true, sideOpen: window.innerWidth >= 1150,
     busy: false, busySince: 0, waiting: false, waitSeq: -1, waitPhase: null, waitTimer: 0,
     enginePhase: null, intro: false, introTimers: [], csv: null, csvName: '', ride: false,
+    waitTurn: null, softTimer: 0, skipOpen: false, trayKey: '',
+    // card params: local values the player is changing (key → {name: value}), revision counters, debounce timers
+    lp: {}, lpRev: {}, lpSent: {}, pTimers: {}, updating: {}, quiet: [], dragging: false, trayDirty: false,
   };
   const E = (fn, ...a) => { if (!engineOk) return; try { return fn(...a); } catch (e) { console.warn('[game] engine call failed', e); } };
 
@@ -197,11 +225,12 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
         <p class="ist-note">Enter your own numbers as they are today. No numbers at hand? Load the example data set.</p>
         <div class="ist-ex"></div>
         <div class="ist-form"></div>
-        <p class="ist-note">🛣️ Your road runs year by year from your age to retirement at <b class="ret-age">65</b>.
-          📊 How to invest is compared later in the analysis – with tips for your data.</p>
+        <p class="ist-note">🛣️ Your road runs year by year from your age to <b class="ret-age">85</b> – retire whenever you
+          like from 60 (at 70 at the latest). 📊 How to invest is compared later in the analysis – with tips for your data.</p>
         <h3 class="sec">2 · Later: replay your real data</h3>
         <p class="ist-note">Collected your real monthly numbers since then? Upload them as CSV – the twin updates its
-          statements and drives you through your months as a film ride. Or watch the example data set's recorded months.</p>
+          statements and drives you through your months as a film ride. Or watch the example data set's recorded months.
+          The CSV is only your past net flow per month – future costs come from your status quo and your choices in the game.</p>
         <div class="ride-box">
           <label class="btn btn-sm btn-blue file-btn">📄 CHOOSE CSV<input type="file" class="csv-in" accept=".csv,text/csv"></label>
           <span class="csv-name">no file chosen</span>
@@ -227,7 +256,13 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     <div class="tray pe"><div class="tray-head"></div><div class="tray-row"></div></div>
     <div class="busy-pill">🎬 Life is happening …</div>
     <footer class="dock pe"><div class="cats"></div>
-      <button class="btn btn-yellow btn-go" data-act="stay" data-lock>DRIVE ON</button>
+      <div class="gobox">
+        <button class="btn btn-yellow btn-go" data-act="stay" data-lock>DRIVE ON</button>
+        <div class="skipbox" hidden>
+          <button class="btn btn-sm btn-purple btn-skip" data-act="skipMenu" data-lock title="Fast-forward several years" aria-haspopup="menu" aria-expanded="false">SKIP ▶▶</button>
+          <div class="skipmenu" role="menu"></div>
+        </div>
+      </div>
     </footer>
   </section>
 
@@ -304,6 +339,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     rcDots: $('.rc-dots'), rideEnd: $('.ride-end'), rideSub: $('.ride-sub'), rideKpis: $('.ride-kpis'), rideSt: $('.ride-statements'),
     hud: $('.hud'), side: $('.side'), quests: $('.quests'), fanPlay: $('.fan-play'), hist: $('.hist'), histH: $('.hist-h'),
     tray: $('.tray'), trayHead: $('.tray-head'), trayRow: $('.tray-row'), cats: $('.cats'),
+    skipBox: $('.skipbox'), skipBtn: $('.btn-skip'), skipMenu: $('.skipmenu'), busyPill: $('.busy-pill'),
     resSub: $('.res-sub'), resStats: $('.res-stats'), resList: $('.res-list'),
     factsTiles: $('.facts-tiles'), gauge: $('.gauge'), fanEnd: $('.fan-end'), disclaimer: $('.disclaimer'),
     intro: $('.intro'), ibName: $('.ib-name'), ibAges: $('.ib-ages'), ibText: $('.ib-text'), ihList: $('.ih-list'),
@@ -424,7 +460,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   function renderStartPanel() {
     const boot = (st.P && st.P.boot) || {};
     const ex = boot.example, statuses = arr(boot.statuses);
-    if (boot.retire_age) R.retAge.textContent = num(boot.retire_age, 65);
+    R.retAge.textContent = num(boot.end_age, num(boot.life_end, 85));
     R.istEx.innerHTML = ex ? `
       <button class="exchip ${st.ist && st.ist.basis === ex.id ? 'on' : ''}" data-act="ex">
         <span class="e">📋</span><span><b>Load example data</b><small>${esc(ex.name)} · ${num(ex.age)} · ${esc(ex.status || '')}</small></span>
@@ -487,14 +523,19 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     const K = num(play.K, 15), turn = num(play.turn);
     const av = (st.P && st.P.avatar) || st.cfg, avCol = safeColor(COLORS[av.color], '#7b4dff');
     const name = h.name || av.name || 'Alex';
-    const nw = num(h.net_worth);
+    const nw = num(h.net_worth), stNow = clamp(turn + 1, 1, Math.max(1, K));
+    const age = num(h.age, num(play.age)), endAge = num(play.end_age, num(play.start_age, 20) + K);
+    const skipped = num((play.world || {}).skipped);
+    R.busyPill.textContent = skipped >= 2 ? `⏩ Fast-forward: ${skipped} years …` : '🎬 Life is happening …';
     R.hud.innerHTML = `
       <div class="pill name"><span class="av" style="background:${avCol}">${esc(String(name).trim().charAt(0).toUpperCase() || '?')}</span>
-        <span class="big">${esc(name)}</span><span class="sub">· age ${num(h.age, num(play.age))}</span></div>
+        <span class="big">${esc(name)}</span><span class="sub">· age ${age}</span></div>
       <div class="pill money" title="Net worth"><span class="ico">💰</span><span class="big ${nw < 0 ? 'neg' : ''}">${chf(nw)}</span></div>
       <div class="grow"></div>
-      <div class="pill station"><span class="big">Station ${clamp(turn + 1, 1, K)}/${K}</span>${h.state ? `<span class="sub">${esc(h.state)}</span>` : ''}</div>
-      <button class="btn-round sm blue" data-act="side" title="Goals, achievements & net worth">📊</button>`;
+      <div class="pill station" title="${esc(`Age ${age} · life runs to ${endAge}`)}"><span class="st-col">
+        <span class="st-top"><span class="big">Station ${stNow}<small>/${K}</small></span>${h.state ? `<span class="sub">${esc(h.state)}</span>` : ''}</span>
+        <i class="st-bar"><b style="width:${(stNow / Math.max(1, K) * 100).toFixed(1)}%"></b></i></span></div>
+      <button class="btn-round sm blue" data-act="side" title="Goals, net worth & your stations">📊</button>`;
 
     // categories
     const cats = arr(play.categories);
@@ -509,9 +550,11 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
         <span class="badge ${num(c.open) ? '' : 'zero'}">${num(c.open)}</span>
         <div class="mh">${esc(c.label)}</div><div class="mb"><div class="emo">${esc(c.emoji)}</div></div>
       </button>`).join('');
-    renderTray(); renderSide(); updateLocks();
+    renderTray(); renderSide(); renderSkip(); updateLocks();
   }
   function renderTray() {
+    if (st.dragging) { st.trayDirty = true; return; }   // never rebuild a slider under the player's finger
+    st.trayDirty = false;
     const play = (st.P && st.P.play) || {};
     const cat = arr(play.categories).find(c => c.key === st.selCat);
     const ageEnd = num(play.end_age, num(play.start_age, 20) + num(play.K, 15));
@@ -519,12 +562,44 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     R.trayHead.innerHTML = cat ? `<span class="tray-title ol">${esc(cat.emoji)} ${esc(cat.label)}</span>
       <button class="btn-round sm" data-act="tray" title="Show / hide cards">▾</button>` : '';
     const color = safeColor(cat && cat.color);
+    // same station + same category (e.g. a slider update): keep the scroll position, focus and skip the card pop-in
+    const key = `${num(play.turn)}|${st.selCat}`, same = key === st.trayKey; st.trayKey = key;
+    const ae = document.activeElement, focus = ae && root.contains(ae) && ae.dataset && ae.dataset.pk ? [ae.dataset.pk, ae.dataset.pn] : null;
+    const sl = R.trayRow.scrollLeft;
+    R.trayRow.classList.toggle('still', same);
     R.trayRow.innerHTML = cards.length ? cards.map((c, i) => decisionCard(c, ageEnd, i, color)).join('')
       : `<div class="tray-empty">Nothing open here right now – pick another category or drive on.</div>`;
+    if (same) R.trayRow.scrollLeft = sl;
+    if (focus) {
+      const el = [...R.trayRow.querySelectorAll('input[data-pk]')].find(x => x.dataset.pk === focus[0] && x.dataset.pn === focus[1]);
+      if (el) try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    }
     R.tray.classList.toggle('hide', !st.trayOpen || !cat || st.busy);
   }
+  const cardByKey = k => arr(st.P && st.P.play && st.P.play.cards).find(c => c.key === k) || null;
+  // current values of a card's params: what the player is setting right now, else the stored value, else the default
+  function paramValues(c) {
+    const out = {}, loc = st.lp[c.key] || {};
+    for (const [n, p] of paramList(c)) out[n] = snapParam(p, loc[n] !== undefined ? loc[n] : (p.value !== undefined && p.value !== null ? p.value : p.default));
+    return out;
+  }
+  function paramBox(c) {
+    const ps = paramList(c); if (!ps.length) return '';
+    const vals = paramValues(c), k = esc(c.key);
+    return `<div class="params">${ps.map(([n, p]) => {
+      const v = vals[n], nn = esc(n), lbl = esc(p.label || n), step = num(p.step, 0) > 0 ? +p.step : 1;
+      return `<div class="prm">
+        <div class="prm-top"><span class="prm-l">${lbl}</span><b class="prm-v" data-pv="${nn}">${esc(fmtParam(p, v))}</b></div>
+        <div class="prm-row">
+          <button class="pstep" data-act="pstep" data-k="${k}" data-n="${nn}" data-d="-1" title="Less" aria-label="${lbl}: less">−</button>
+          <input class="prm-r" type="range" data-pk="${k}" data-pn="${nn}" min="${+p.min}" max="${+p.max}" step="${step}" value="${v}" aria-label="${lbl}">
+          <button class="pstep" data-act="pstep" data-k="${k}" data-n="${nn}" data-d="1" title="More" aria-label="${lbl}: more">+</button>
+        </div>
+        <div class="prm-mm"><span>${esc(fmtParamShort(p, p.min))}</span><span>${esc(fmtParamShort(p, p.max))}</span></div></div>`;
+    }).join('')}</div>`;
+  }
   function decisionCard(c, ageEnd, i, color) {
-    const locked = !!c.locked;
+    const locked = !!c.locked, hasP = paramList(c).length > 0, upd = !!st.updating[c.key];
     const chips = [];
     if (c.delta !== undefined && c.delta !== null) chips.push(`<span class="chip2 ${num(c.delta) >= 0 ? 'pos' : 'neg'}" title="Difference to “just driving on” at ${ageEnd}">💰 ${chfShortSigned(c.delta)}</span>`);
     if (c.credit !== undefined && c.credit !== null && Number.isFinite(+c.credit)) {
@@ -535,10 +610,79 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     const reason = typeof c.locked === 'string' && c.locked.trim() ? c.locked : 'Locked';
     const foot = locked ? `<div class="lockbox">🔒 ${esc(reason)}</div>`
       : `<button class="btn btn-green" data-act="choose" data-k="${esc(c.key)}" data-lock>CHOOSE</button>`;
-    return `<div class="dcard ${locked ? 'locked' : ''}" style="--rc:${color};animation-delay:${Math.min(i, 8) * 55}ms">
+    return `<div class="dcard ${locked ? 'locked' : ''} ${hasP ? 'has-params' : ''} ${upd ? 'updating' : ''}" data-card="${esc(c.key)}" style="--rc:${color};animation-delay:${Math.min(i, 8) * 55}ms">
       <div class="band"><span>${esc(c.emoji || '🃏')}</span></div>
-      <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>
-      <div class="chips2">${chips.join('')}</div>${proj}${foot}</div>`;
+      <h4>${esc(c.title)}</h4><p>${esc(c.text || '')}</p>${paramBox(c)}
+      <div class="prev"><div class="chips2">${chips.join('')}</div>${proj}<span class="upd">updating …</span></div>${foot}</div>`;
+  }
+  /* ---------------------------------------------------------------- card params (quiet updates, no wait screen) */
+  function cardEl(k) { return [...R.trayRow.querySelectorAll('.dcard[data-card]')].find(el => el.dataset.card === k) || null; }
+  function markUpdating(k, on) {
+    if (on) st.updating[k] = performance.now(); else delete st.updating[k];
+    const el = cardEl(k); if (el) el.classList.toggle('updating', !!on);
+  }
+  function setParam(k, n, raw, input = null) {
+    const c = cardByKey(k); if (!c) return;
+    const p = (c.params || {})[n]; if (!p) return;
+    const v = snapParam(p, raw);
+    st.lp[k] = { ...paramValues(c), [n]: v }; st.lpRev[k] = num(st.lpRev[k]) + 1;
+    const el = cardEl(k);
+    if (el) {
+      const out = [...el.querySelectorAll('[data-pv]')].find(x => x.dataset.pv === n); if (out) out.textContent = fmtParam(p, v);
+      const r = input || [...el.querySelectorAll('input[data-pk]')].find(x => x.dataset.pn === n); if (r && +r.value !== v) r.value = v;
+    }
+    markUpdating(k, true);
+    clearTimeout(st.pTimers[k]);
+    st.pTimers[k] = setTimeout(() => flushParams(k), 350);
+  }
+  function flushParams(k) {
+    clearTimeout(st.pTimers[k]); delete st.pTimers[k];
+    if (!st.lp[k] || !cardByKey(k)) { delete st.lp[k]; markUpdating(k, false); return; }
+    if (st.waiting) { st.pTimers[k] = setTimeout(() => flushParams(k), 500); return; }   // Python is busy: send afterwards
+    st.lpSent[k] = st.lpRev[k];
+    sendQuiet({ action: 'card_params', key: k, params: { ...st.lp[k] } });
+    setTimeout(() => { if (st.updating[k] && performance.now() - st.updating[k] > 7500) markUpdating(k, false); }, 8000);
+  }
+  function sendQuiet(value) {
+    st.quiet.push(performance.now());
+    try { send(value); } catch (e) { console.warn('[game] send failed', e); st.quiet.pop(); }
+  }
+  // a new payload arrived: local values that were sent and answered are now owned by the server again
+  function settleParams() {
+    const now = performance.now();
+    st.quiet = st.quiet.filter(t => now - t < 6000); st.quiet.shift();
+    for (const k of Object.keys(st.lp)) {
+      if (st.pTimers[k]) continue;
+      if (st.lpSent[k] === st.lpRev[k] && !st.quiet.length) { delete st.lp[k]; delete st.updating[k]; }
+    }
+    for (const k of Object.keys(st.updating)) if (!st.lp[k]) delete st.updating[k];
+  }
+  function chooseCard(k) {
+    const c = cardByKey(k), v = { action: 'choose', key: k };
+    if (c && paramList(c).length) { v.params = paramValues(c); clearTimeout(st.pTimers[k]); delete st.pTimers[k]; st.lpSent[k] = st.lpRev[k]; }
+    act(v);
+  }
+  /* ---------------------------------------------------------------- skip (fast-forward several years) */
+  function skipOptions() {
+    const play = (st.P && st.P.play) || {};
+    return arr(play.skip).filter(o => o && (o.until === 'event' || num(o.years) >= 1));
+  }
+  function renderSkip() {
+    const opts = skipOptions();
+    R.skipBox.hidden = !opts.length;
+    if (!opts.length) st.skipOpen = false;
+    R.skipMenu.innerHTML = opts.map((o, i) => `<button class="skipopt" role="menuitem" data-act="skip" data-i="${i}" data-lock>${o.until === 'event' ? '⏭️' : '⏩'} ${esc(o.label || (o.until === 'event' ? 'Next event' : `+${num(o.years)} years`))}</button>`).join('');
+    showSkipMenu(st.skipOpen);
+  }
+  function showSkipMenu(on) {
+    st.skipOpen = !!on && !engineBusy() && !st.waiting && !R.skipBox.hidden;
+    R.skipBox.classList.toggle('open', st.skipOpen);
+    R.skipBtn.setAttribute('aria-expanded', st.skipOpen ? 'true' : 'false');
+  }
+  function doSkip(i) {
+    const o = skipOptions()[i]; showSkipMenu(false); if (!o || engineBusy()) return;
+    const v = o.until === 'event' ? { action: 'skip', until: 'event' } : { action: 'skip', years: Math.max(1, Math.round(num(o.years, 1))) };
+    act(v, o.until === 'event' ? 'Driving to the next event' : `Skipping ${v.years} years`);
   }
   function renderSide() {
     const play = (st.P && st.P.play) || {};
@@ -552,7 +696,8 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     }).join('') : '<div class="qs">No active goals.</div>';
     const hist = arr(play.history);
     R.histH.style.display = hist.length ? '' : 'none';
-    R.hist.innerHTML = hist.map(x => `<span title="${esc(`age ${num(x.age)} · ${x.title || ''}`)}">${esc(x.emoji || '•')}</span>`).join('');
+    R.hist.innerHTML = hist.map(x => `<span class="hi" title="${esc(`age ${num(x.age)} · ${x.title || ''}`)}"><em>${esc(x.emoji || '•')}</em><small>${num(x.age)}</small></span>`).join('');
+    R.hist.scrollTop = R.hist.scrollHeight;
     if (play.fan) requestAnimationFrame(() => drawFan(R.fanPlay, play.fan, { small: true }));
   }
 
@@ -609,13 +754,13 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       const from = num(data.from, num(play.start_age, 20)), to = num(data.to, num(play.end_age, from + num(play.K, 15)));
       const step = Math.max(1, num(data.step, num(play.step, 1))), yrs = step === 1 ? 'one year' : `${step} years`;
       R.ibName.textContent = `${name}'S LIFE`; R.ibAges.textContent = `AGE ${from} → ${to}`;
-      R.ibText.textContent = `${num(data.stations, 15)} stations · one choice every ${step === 1 ? 'year' : step + ' years'} · all the way to retirement!`;
+      R.ibText.textContent = `${num(data.stations, 15)} stations · one choice every ${step === 1 ? 'year' : step + ' years'} · all the way to ${to}!`;
       R.ihList.innerHTML = [
-        ['🛣️', `Every station is ${yrs} of your life – from ${from} to retirement at ${to}.`],
-        ['🃏', 'Pick one card per station – or just drive on.'],
+        ['🛣️', `Every station is ${yrs} of your life – from ${from} to ${to}.`],
+        ['🃏', 'Pick one card per station – or just drive on. SKIP ▶▶ fast-forwards several years.'],
+        ['🎚️', 'Some cards have sliders: the price of a home, the cost of a child, your monthly budget.'],
         ['💰', `Each card previews your net worth at ${to}, its range and the credit risk.`],
-        ['📊', 'Savings above a 3-month buffer are invested balanced – compare other styles in the analysis.'],
-        ['🎯', 'Keep an eye on your goals and stay debt-free.'],
+        ['🪑', 'Retire whenever you like from 60 – at 70 at the latest.'],
       ].map(([e, t], i) => `<li style="animation-delay:${300 + i * 260}ms"><span>${e}</span>${esc(t)}</li>`).join('');
     } else if (step === 'howto') {
       R.intro.className = 'intro on s-howto';
@@ -688,12 +833,16 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     st.busy = b; if (b) st.busySince = performance.now();
     root.classList.toggle('play-busy', b && st.screen === 'play');
     if (st.screen === 'play') R.tray.classList.toggle('hide', !st.trayOpen || b || !st.selCat);
+    if (b) showSkipMenu(false);
     updateLocks();
     if (b) setTimeout(updateLocks, 40500);
   }
-  function setWaiting(on, label) {
-    st.waiting = !!on; root.classList.toggle('waiting', st.waiting); clearTimeout(st.waitTimer);
+  // waitTurn: for choose / skip the wait ends when the station changes (a quiet slider answer in between does not count)
+  function setWaiting(on, label, waitTurn = null) {
+    st.waiting = !!on; root.classList.toggle('waiting', st.waiting); clearTimeout(st.waitTimer); clearTimeout(st.softTimer);
+    st.waitTurn = st.waiting ? waitTurn : null;
     if (st.waiting) {
+      showSkipMenu(false);
       st.waitSeq = st.P ? num(st.P.seq, -1) : -1; st.waitPhase = st.P ? st.P.phase : null;
       R.waitLabel.textContent = label || WAIT_TXT[Math.floor(Math.random() * WAIT_TXT.length)];
       st.waitTimer = setTimeout(() => { if (st.waiting) { setWaiting(false); toast('⏳ No answer – please try again', 3200); } }, 25000);
@@ -703,13 +852,16 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   function act(value, label) {
     if (st.waiting) return;
     const labels = { start: 'Preparing your life', restart: 'A new life is waiting', analyse: 'Opening the analysis',
-                     ride: 'Reading your data', ride_play: 'Starting your updated life' };
-    setWaiting(true, label || labels[value.action]);
+                     ride: 'Reading your data', ride_play: 'Starting your updated life', skip: 'Fast-forwarding your life' };
+    const play = st.P && st.P.phase === 'play' && st.P.play;
+    const waitTurn = play && (value.action === 'choose' || value.action === 'skip') ? num(play.turn) : null;
+    setWaiting(true, label || labels[value.action], waitTurn);
     try { send(value); } catch (e) { console.warn('[game] send failed', e); setWaiting(false); }
   }
 
   /* ---------------------------------------------------------------- events */
   root.addEventListener('click', ev => {
+    if (st.skipOpen && !ev.target.closest('.skipbox')) showSkipMenu(false);
     const b = ev.target.closest('[data-act]'); if (!b || !root.contains(b) || b.disabled) return;
     const a = b.dataset.act;
     switch (a) {
@@ -738,7 +890,14 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
         renderTray(); updateLocks(); break;
       case 'tray': st.trayOpen = false; renderTray(); break;
       case 'side': st.sideOpen = !st.sideOpen; renderSide(); break;
-      case 'choose': if (!engineBusy()) act({ action: 'choose', key: b.dataset.k }); break;
+      case 'choose': if (!engineBusy()) chooseCard(b.dataset.k); break;
+      case 'pstep': {
+        const c = cardByKey(b.dataset.k), p = c && (c.params || {})[b.dataset.n]; if (!p) break;
+        const cur = paramValues(c)[b.dataset.n], step = num(p.step, 0) > 0 ? +p.step : 1;
+        setParam(b.dataset.k, b.dataset.n, cur + step * (+b.dataset.d < 0 ? -1 : 1)); break;
+      }
+      case 'skipMenu': showSkipMenu(!st.skipOpen); break;
+      case 'skip': doSkip(+b.dataset.i); break;
       case 'stay': if (!engineBusy()) act({ action: 'choose', key: ((st.P && st.P.play && st.P.play.stay) || {}).key || 'stay' }); break;
       case 'toFacts': go('facts'); break;
       case 'toSummary': go('summary'); break;
@@ -746,6 +905,14 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
       case 'skipIntro': skipIntro(); break;
     }
   });
+  // card sliders: live label, debounced quiet update; no tray rebuild while a slider is being dragged
+  root.addEventListener('input', ev => {
+    const r = ev.target.closest && ev.target.closest('input[data-pk]'); if (!r) return;
+    setParam(r.dataset.pk, r.dataset.pn, +r.value, r);
+  });
+  root.addEventListener('pointerdown', ev => { if (ev.target.closest && ev.target.closest('input[data-pk]')) st.dragging = true; });
+  const endDrag = () => { if (!st.dragging) return; st.dragging = false; if (st.trayDirty && st.screen === 'play') renderTray(); };
+  window.addEventListener('pointerup', endDrag); window.addEventListener('pointercancel', endDrag); window.addEventListener('blur', endDrag);
   R.name.addEventListener('input', () => { st.cfg = { ...st.cfg, name: R.name.value.slice(0, 16) }; st.touched = true; });
   R.name.addEventListener('keydown', ev => { if (ev.key === 'Enter') R.name.blur(); });
   R.csvIn.addEventListener('change', () => {
@@ -764,6 +931,7 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
   window.addEventListener('keydown', ev => {
     if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
     if (st.intro && (ev.key === 'Enter' || ev.key === 'Escape' || ev.key === ' ')) { skipIntro(); ev.preventDefault(); return; }
+    if (st.skipOpen && ev.key === 'Escape') { showSkipMenu(false); ev.preventDefault(); return; }
     if (st.screen === 'ride' && !root.classList.contains('ride-done') && (ev.key === ' ' || ev.key === 'Escape')) { skipRide(); ev.preventDefault(); return; }
     if (st.screen === 'title' && ev.key === 'Enter') { go('creator'); ev.preventDefault(); }
     else if (st.screen === 'creator') {
@@ -784,7 +952,13 @@ export function createUI(root, { send, engineOk = true, standalone = false, onSk
     const sig = `${p.seq}|${p.phase}`;
     if (sig === st.sig) return;
     st.sig = sig; st.P = p;
-    if (st.waiting && (num(p.seq, -1) > st.waitSeq || p.phase !== st.waitPhase)) setWaiting(false);
+    settleParams();
+    if (p.phase !== 'play') { st.lp = {}; st.updating = {}; st.skipOpen = false; }
+    if (st.waiting && (num(p.seq, -1) > st.waitSeq || p.phase !== st.waitPhase)) {
+      const turnNow = p.play ? num(p.play.turn) : null;
+      if (st.waitTurn === null || p.phase !== st.waitPhase || p.error || turnNow !== st.waitTurn) setWaiting(false);
+      else { clearTimeout(st.softTimer); st.softTimer = setTimeout(() => { if (st.waiting) setWaiting(false); }, 4000); }
+    }
     if (p.error) setTimeout(() => toast('⚠️ ' + p.error, 5000), 300);
     if (p.avatar && typeof p.avatar === 'object' && !st.touched) st.cfg = { ...DEFAULT_CFG, ...p.avatar };
     if (st.loaded) route();

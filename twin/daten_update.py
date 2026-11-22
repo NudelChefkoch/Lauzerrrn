@@ -26,7 +26,7 @@ import pandas as pd
 
 from .calibration import Calibration, Person, calibrate
 from .config import Assumptions, OTHER, STATUS_TO_STATE
-from .engine import simulate
+from .engine import MAX_YEARS, simulate
 
 GOAL_LABEL = {"Emergency savings": "Emergency fund", "Career transition": "Career-change cushion",
               "Education flexibility": "Education reserve", "Housing deposit": "Home down payment",
@@ -170,7 +170,7 @@ def aktualisiere_aus_daten(person: Person, quelle: str | Path | pd.DataFrame, *,
     calib = calib or calibrate()
     df = lese_neue_daten(quelle, profile_id if profile_id is not None else person.profile_id)
     neu = nachkalibrieren(person, df, calib)
-    hz = (lambda p: int(min(50, max(1, bis_alter - p.age)))) if bis_alter else (lambda p: years)
+    hz = (lambda p: int(min(MAX_YEARS, max(1, bis_alter - p.age)))) if bis_alter else (lambda p: years)
     vorher = kennzahlen(person, calib, assumptions, hz(person), n_paths, seed)
     nachher = kennzahlen(neu, calib, assumptions, hz(neu), n_paths, seed)
     ist = {"basis": None, "age": neu.age, "status": neu.status, "income": round(neu.income),

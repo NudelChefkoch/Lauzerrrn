@@ -434,6 +434,14 @@ function addProp(ch, name) {
       const fc = ['#ff8fb1', '#ffffff', '#ffd23f', '#e34948', '#ff8fb1'];
       fc.forEach((c, i) => { const a = i / fc.length * Math.PI * 2; add(b, new THREE.SphereGeometry(.08, 10, 8), M(c, .6), Math.cos(a) * .09, .08, Math.sin(a) * .09); });
       add(b, new THREE.SphereGeometry(.08, 10, 8), M('#ffffff', .6), 0, .13, 0); break; }
+    case 'backpack': { parent = P.body; // travel backpack on the back (gap year, child moving out)
+      add(grp, new THREE.BoxGeometry(.56, .62, .28), M('#e3802f', .7), 0, 1.02, -.42);
+      add(grp, new THREE.BoxGeometry(.46, .2, .08), M('#b85f1c', .7), 0, .86, -.58);
+      add(grp, new THREE.CylinderGeometry(.11, .11, .58, 12), M('#3a6ea5', .8), 0, 1.4, -.42).rotation.z = Math.PI / 2;
+      for (const x of [-.18, .18]) add(grp, new THREE.BoxGeometry(.06, .55, .05), M('#6b3a12', .7), x, 1.05, -.27);
+      break; }
+    case 'suitcase': parent = P.handL; add(grp, new THREE.BoxGeometry(.5, .4, .2), M('#e34948', .5), 0, -.36, 0);
+      add(grp, new THREE.TorusGeometry(.08, .02, 8, 16, Math.PI), M('#5a2020'), 0, -.15, 0); break;
     case 'baby': { parent = P.body; const b = new THREE.Group(); b.position.set(0, 1.08, .5); grp.add(b);
       add(b, new THREE.CapsuleGeometry(.17, .22, 6, 12), M('#9fd3f5', .9), 0, 0, 0).rotation.z = Math.PI / 2;
       add(b, new THREE.SphereGeometry(.15, 16, 12), M(SKINS[ch.userData.cfg.skin] || '#f2c2a2', .75), .27, .08, .02);
@@ -460,6 +468,10 @@ function animateCharacter(ch, dt) {
     P.legL.rotation.x = P.legR.rotation.x = 0;
     if (!u.hold) { P.armL.rotation.set(0, 0, -2.6 + Math.sin(u.t * 12) * .25); P.armR.rotation.set(0, 0, 2.6 - Math.sin(u.t * 12) * .25); }
     P.body.position.y = Math.abs(Math.sin(u.t * 7)) * .25;
+  } else if (u.mode === 'wave') {   // one arm up, waving goodbye
+    P.legL.rotation.x = P.legR.rotation.x = 0;
+    if (!u.hold) { P.armR.rotation.set(0, 0, 2.5 + Math.sin(u.t * 11) * .35); P.armL.rotation.z = lerp(P.armL.rotation.z, -(u.restZ || .12), .15); }
+    P.body.position.y = Math.sin(u.t * 2.2) * .02;
   } else if (u.mode === 'sit') {
     P.legL.rotation.x = P.legR.rotation.x = -1.45; P.body.position.y = -.42;
   } else if (u.mode === 'seated') {

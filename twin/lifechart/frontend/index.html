@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life chart</title>
+<link rel="stylesheet" href="lifechart.css">
+</head>
+<body>
+<section class="lc" aria-label="Net worth over your life">
+  <div class="lc-controls">
+    <div class="lc-seg" role="group" aria-label="Compare your plan with"></div>
+    <label class="lc-toggle"><input type="checkbox" class="lc-band" checked> Show range p5–p95</label>
+  </div>
+  <div class="lc-wrap">
+    <canvas class="lc-canvas" tabindex="0"
+            aria-label="Net worth by age. Use the arrow keys to move month by month, Shift for whole years."
+            aria-describedby="lc-readout"></canvas>
+    <div class="lc-tip" hidden></div>
+    <p class="lc-vh" id="lc-readout" aria-live="polite"></p>
+  </div>
+  <div class="lc-legend"></div>
+  <p class="lc-summary" aria-live="polite"></p>
+</section>
+<script src="lifechart.js"></script>
+</body>
+</html>

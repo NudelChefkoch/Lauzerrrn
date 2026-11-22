@@ -24,6 +24,7 @@ from .scenarios import Event, Plan, build_plan
 
 PCTS = (5, 25, 50, 75, 95)
 SERIES = ("cash", "portfolio", "debt", "house_equity", "net_worth", "liquid")
+MAX_YEARS = 70           # longest horizon (the game runs from age 15 to 85)
 
 
 @dataclass
@@ -60,15 +61,16 @@ def _market_draws(rng, a: Assumptions, shape, stochastic: bool):
 def simulate(person: Person | str, events: list[Event] | None = None, years: int = 10,
              a: Assumptions | None = None, n_paths: int = 5000, seed: int = 0,
              stochastic: bool = True, calib: Calibration | None = None, n_samples: int = 20,
-             fixed_until: int = 0) -> Result:
+             fixed_until: int = 0, pct_series: tuple[str, ...] | None = None) -> Result:
     """fixed_until: all paths share path 0's random draws before this month (= the realised past),
-    so the fan shows futures *conditional* on what already happened."""
+    so the fan shows futures *conditional* on what already happened.
+    pct_series: series to compute percentiles for (default: all of SERIES; () = only the metrics, faster)."""
     calib = calib or calibrate()
     if isinstance(person, str):
         person = calib.persons[person]
     a = a or Assumptions()
-    if not 1 <= years <= 50:
-        raise ValueError("years must be between 1 and 50")
+    if not 1 <= years <= MAX_YEARS:
+        raise ValueError(f"years must be between 1 and {MAX_YEARS}")
     T, N = 12 * years, (n_paths if stochastic else 1)
     plan = build_plan(person, events or [], T, calib, a)
     rng = np.random.default_rng(seed)
@@ -169,13 +171,18 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
         expenses = np.where(owns, expenses - person.rent * P, expenses)
         spend = expenses * np.where(austerity, 1 - sh.spending_cut, 1.0)
 
-        seas = np.zeros(N)
-        sig = np.zeros(N)
-        for s in np.unique(state):
-            idx = state == s
-            sp = calib.states[int(s)]
-            seas[idx] = sp.seasonal[m]
-            sig[idx] = (person.sigma if s == person.state else sp.sigma) * sp.sigma_mult[m]
+        if not rand_unemp.any():                 # all paths in the planned state (fast path, same numbers)
+            sp = calib.states[int(s_plan)]
+            seas = sp.seasonal[m]
+            sig = (person.sigma if s_plan == person.state else sp.sigma) * sp.sigma_mult[m]
+        else:
+            seas = np.zeros(N)
+            sig = np.zeros(N)
+            for s in np.unique(state):
+                idx = state == s
+                sp = calib.states[int(s)]
+                seas[idx] = sp.seasonal[m]
+                sig[idx] = (person.sigma if s == person.state else sp.sigma) * sp.sigma_mult[m]
         flow = income - spend - plan.extra_cost[t] * P + (seas + sig * eps[t]) * P
         cash += flow
         booked += flow
@@ -247,7 +254,7 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
         min_liquid = np.minimum(min_liquid, store["liquid"][:, t + 1])
 
     ident = float(np.max(np.abs(nw() - nw0 - booked)))
-    pct = {s: np.percentile(v, PCTS, axis=0) for s, v in store.items()}
+    pct = {s: np.percentile(v, PCTS, axis=0) for s, v in store.items() if pct_series is None or s in pct_series}
     mean = {s: v.mean(axis=0) for s, v in store.items()}
     final = store["net_worth"][:, -1]
     metrics = {

@@ -1,6 +1,8 @@
 """Analysis mode: dashboard with all the controls (English GUI)."""
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import asdict, replace
 
 import numpy as np
@@ -9,19 +11,22 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from twin.analysis import tornado
+from twin.analysis_chat import ChatCtx, answer, avatar_from_cfg, greeting, status, suggestions
+from twin.avatar import avatar_svg
 from twin.calibration import calibrate
 from twin.config import (MARKET_PRESETS, STATE_NAMES, STRATEGY_PRESETS, Assumptions, Macro,
                          Shocks, Shortfall)
 from twin.engine import PCTS, simulate
-from twin.tipps import tipps
+from twin.lifechart import chart_data, life_chart
+from twin.tipps import STYLES, tipps
 from twin.scenarios import (PRESET_LABELS, PRESETS, ExpenseChange, HouseBuy, Job, JobChange, MarketCrash, OneOff,
                             SelfEmployment, Study, Unemployment, describe, preset)
 
 
 # chart colours (validated categorical slots 1/2 + blue sequential steps for the bands)
 BLUE, ORANGE = "#2a78d6", "#eb6834"
-BAND_OUTER, BAND_INNER = "rgba(42,120,214,0.14)", "rgba(42,120,214,0.30)"
 CRISIS_PREFIX = "Crisis: "
+CHAT_PATHS = 1000          # paths per simulation the twin chat runs (fast enough to answer within a second)
 
 EVENT_TYPES = {
     "Study": Study, "Job": Job, "Job change": JobChange, "Unemployment": Unemployment,
@@ -37,18 +42,19 @@ def get_calib():
     return calibrate()
 
 
-# keyed by the (frozen) Person, so the player's own data works exactly like the challenge profiles
-@st.cache_data(show_spinner=False, max_entries=64)
+# keyed by the (frozen) Person, so the player's own data works exactly like the challenge profiles.
+# cache_resource (no pickling): results are read-only here, and pickling breaks after a dev hot-reload of twin/*
+@st.cache_resource(show_spinner=False, max_entries=64)
 def run(person, events: tuple, years: int, a: Assumptions, n_paths: int, seed: int):
     return simulate(person, list(events), years, a, n_paths, seed, calib=get_calib())
 
 
-@st.cache_data(show_spinner=False, max_entries=16)
+@st.cache_resource(show_spinner=False, max_entries=16)
 def run_tornado(person, events: tuple, years: int, a: Assumptions, n_paths: int, seed: int):
     return tornado(person, list(events), years, a, get_calib(), n_paths, seed)
 
 
-@st.cache_data(show_spinner=False, max_entries=32)
+@st.cache_resource(show_spinner=False, max_entries=32)
 def run_tips(person, years: int, a: Assumptions, seed: int):
     return tipps(person, get_calib(), a, years, 800, seed)
 
@@ -242,15 +248,93 @@ if m["p_alv_exhausted"] > 0:
 for w in warnings:
     st.warning(w, icon="⚠️")
 
+# ================================================================ your twin: avatar + chat
+def played_decisions(sess) -> list[dict]:
+    """Decisions of the game session (without "drive on"), with the age at which they were taken."""
+    out = []
+    try:
+        for h in getattr(sess, "history", None) or []:
+            if h.get("key") != "stay":
+                out.append({"age": sess.age_at(h["turn"]), "emoji": h.get("emoji", ""), "title": h.get("title", "")})
+    except Exception:
+        return []
+    return out
+
+
+def bubble_text(msg: dict) -> str:
+    text = msg.get("bubble") or msg.get("content", "")
+    text = re.sub(r"\*\*|“|”", "", text).replace(" Not investment advice.", "")
+    return text if len(text) <= 190 else text[:187].rsplit(" ", 1)[0] + " …"
+
+
+st.markdown("""<style>
+.twin-av { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.twin-bubble { position: relative; width: 100%; padding: 10px 13px; border-radius: 16px; font-size: .9rem;
+  line-height: 1.4; background: rgba(42,120,214,.10); border: 1px solid rgba(42,120,214,.35); }
+.twin-bubble::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 16px; height: 16px;
+  transform: translateX(-50%) rotate(45deg); background: inherit; border-right: inherit; border-bottom: inherit;
+  backdrop-filter: inherit; }
+.twin-av svg { max-width: 150px; height: auto; }
+</style>""", unsafe_allow_html=True)
+
+is_me = pid == "__me__" and game is not None
+cfg = dict(getattr(game, "avatar", None) or {}) if is_me else {"name": person.name}
+ride = getattr(game, "ride_data", None) if is_me else None
+chat_ctx = ChatCtx(
+    person=person, years=years, a=a, events=events, calib=calib, n_paths=CHAT_PATHS, seed=seed,
+    name=cfg.get("name") if is_me else person.name, decisions=played_decisions(game) if is_me else [],
+    ride=ride if isinstance(ride, dict) else None,
+    sim=lambda ev, yrs, a_: run(person, tuple(ev), yrs, a_, CHAT_PATHS, seed),
+    tips_fn=lambda: run_tips(person, years, a, seed),
+    drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed))
+chat_key = (pid, person)
+if st.session_state.get("twin_chat_key") != chat_key:
+    g = greeting(chat_ctx)
+    st.session_state.twin_chat = [{"role": "assistant", "content": g["text"], "bubble": g["bubble"], "mode": "offline"}]
+    st.session_state.twin_chat_key = chat_key
+    st.session_state.twin_pick_n = st.session_state.get("twin_pick_n", 0) + 1
+
+
+def ask(question: str) -> None:
+    st.session_state.twin_chat.append({"role": "user", "content": question})
+    with st.spinner("Your twin is calculating …"):
+        out = answer(chat_ctx, question)
+    st.session_state.twin_chat.append({"role": "assistant", "content": out["text"], "mode": out["mode"],
+                                       "tool": out["tool"]})
+    st.session_state.twin_chat = st.session_state.twin_chat[-40:]
+
+
+st.subheader("🙋 Your twin")
+with st.container(border=True):
+    av_col, chat_col = st.columns([1, 2.6], gap="large")
+    with chat_col:
+        box = st.container(height=330)
+        pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
+                        label_visibility="collapsed")
+        question = st.chat_input("Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
+        if pick:
+            ask(pick)
+            st.session_state.twin_pick_n += 1
+            st.rerun()
+        if question:
+            ask(question)
+        with box:
+            for msg in st.session_state.twin_chat:
+                with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
+                    st.markdown(msg["content"])
+    with av_col:
+        last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
+        av = avatar_from_cfg(cfg, person.name)
+        st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble_text(last or {}))}</div>'
+                    f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
+        llm = status()
+        st.caption(f"🧠 Local model {llm['model']} picks the calculation; the numbers come from the simulation."
+                   if llm["available"] else
+                   "⚙️ Offline mode: rule-based routing. Start Ollama for the local model – the numbers "
+                   "come from the simulation either way.")
+
 # ================================================================ charts
 x = np.arange(years * 12 + 1) / 12
-
-
-def event_lines(fig):
-    for t, label in res.plan.labels:
-        fig.add_vline(x=t / 12, line_width=1, line_dash="dot", line_color="rgba(128,128,128,0.6)")
-        fig.add_annotation(x=t / 12, y=1, yref="paper", text=label, showarrow=False, textangle=-90,
-                           xanchor="right", yanchor="top", font=dict(size=10, color="gray"))
 
 
 def base_layout(fig, title, h=420):
@@ -292,27 +376,25 @@ with tab0:
                  hide_index=True, width="stretch")
 
 with tab1:
-    p = res.percentiles["net_worth"]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=p[4], line=dict(width=0), showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=x, y=p[0], fill="tonexty", fillcolor=BAND_OUTER, line=dict(width=0),
-                             name="90 % of the cases", hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=x, y=p[3], line=dict(width=0), showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=x, y=p[1], fill="tonexty", fillcolor=BAND_INNER, line=dict(width=0),
-                             name="50 % of the cases", hoverinfo="skip"))
-    for s in res.samples[:8]:
-        fig.add_trace(go.Scatter(x=x, y=s, line=dict(width=0.6, color="rgba(42,120,214,0.35)"),
-                                 showlegend=False, hoverinfo="skip"))
-    fig.add_trace(go.Scatter(x=x, y=p[2], line=dict(width=2.5, color=BLUE), name="Scenario (median)",
-                             hovertemplate="%{y:,.0f} CHF"))
-    if ref:
-        fig.add_trace(go.Scatter(x=x, y=ref.percentiles["net_worth"][2], line=dict(width=2, color=ORANGE, dash="dash"),
-                                 name=f"Comparison: {compare} (median)", hovertemplate="%{y:,.0f} CHF"))
-    event_lines(fig)
-    st.plotly_chart(base_layout(fig, "Net worth: median and uncertainty"), width="stretch",
-                    theme="streamlit")
-    st.caption("Thin lines: individual simulated lives. Bands: range containing 50 % and 90 % of the "
-               "simulations. Net worth = cash + portfolio + house − mortgage − loans.")
+    st.markdown("**Net worth over your life** – hover (or use the arrow keys) for the numbers at every age, and "
+                "switch between two life paths above the chart.")
+    comps = []
+    if ref is not None:
+        comps.append(("ref", "Without crises" if compare == "Plan without crises" else "Without life events", ref))
+    if events and ref_events != ():
+        comps.append(("none", "Without life events", run(person, (), years, a, n_paths, seed)))
+    other_key = "konservativ" if strat_name == "risky" else "risky"
+    for key_, label_, strat_ in STYLES:
+        if key_ in ("cash", other_key):
+            comps.append((f"style_{key_}", "Keep everything in cash" if key_ == "cash" else
+                          f"{label_.split(' ', 1)[1]} investing",
+                          run(person, events, years, a.with_(strategy=strat_), n_paths, seed)))
+    life_chart(chart_data(res, comps, start_age=person.age, plan_label="Your plan",
+                          default_comp="ref" if ref is not None else None, hide_label_prefix=CRISIS_PREFIX),
+               key="lifechart")
+    st.caption("Band: 90 % of the simulated lives (p5–p95). Thin grey line: one simulated life. Dashed: the second "
+               "life path – same random numbers, only the plan or the investment style differs. Net worth = "
+               "cash + portfolio + house − mortgage − loans.")
 
     cols = st.columns(3)
     for col, (key, title) in zip(cols, [("cash", "Cash (median)"), ("portfolio", "Portfolio (median)"),

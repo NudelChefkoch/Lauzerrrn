@@ -130,9 +130,9 @@ def test_random_job_loss_hurts_on_average():
 
 def test_horizon_limits():
     with pytest.raises(ValueError):
-        run(years=51)
+        run(years=71)
     run(years=1, n_paths=10)
-    run(years=45, n_paths=10)          # a 20-year-old's road to retirement at 65
+    run(years=70, n_paths=10)          # a 15-year-old's road to 85
 
 
 def test_market_mean_matches_expected_return():
@@ -165,9 +165,10 @@ def test_game_locks_and_animations():
     opts = dict((o.key, r) for o, r in available(Ctx(snap, frozenset(), 20, 0, frozenset())))
     assert opts["bachelor"] is None and opts["master"] == "Finish a bachelor first"
     assert opts["buy_house"] is not None and opts["child"] == "From age 22"
-    plan = build_plan(ALEXIA, [Study(0, 36, 1500, None, 5200, 800, "Bachelor", "Bachelor's degree")], 60, CALIB, Assumptions())
+    plan = build_plan(ALEXIA, [Study(0, 36, 1500, None, None, 0, "Bachelor", "Bachelor's degree", job_after=False)],
+                      60, CALIB, Assumptions())
     assert finished_degrees(plan, 35) == frozenset() and finished_degrees(plan, 36) == {"bachelor"}
     played = set()
     kinds = [a["type"] for a in animations(plan, 24, 36, 3, played)]   # graduation lands on the arrival month
-    assert kinds == ["graduation", "job"]
+    assert kinds == ["graduation"]                                       # no automatic first job any more
     assert animations(plan, 36, 48, 4, played) == []                     # ...and is not played twice
