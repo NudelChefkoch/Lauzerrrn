@@ -104,6 +104,36 @@ background:linear-gradient(180deg,#ffe577,#ffb800);border:3px solid var(--ink);b
 margin-right:6px;box-shadow:0 2px 0 var(--ink)}
 .lr-h{font-family:var(--fd);font-weight:400;font-size:30px;letter-spacing:.04em;color:#fff;margin:26px 4px 10px;
 --sw:7px;--sd:4px}
+.lr p.lr-hsub{display:inline-block;margin:-2px 4px 12px;padding:6px 12px 7px;background:#fff;border:3px solid var(--ink);
+border-radius:14px;box-shadow:0 3px 0 var(--ink);font-weight:800;font-size:14px;line-height:1.35;color:#4d4575}
+.lr-speech{position:relative;margin:8px 0 6px 16px;background:#fff;border:4px solid var(--ink);border-radius:26px;
+box-shadow:0 8px 0 var(--ink);padding:16px 16px 8px}
+.lr-speech::before{content:"";position:absolute;left:-17px;top:70px;width:26px;height:26px;background:#fff;
+border-left:4px solid var(--ink);border-bottom:4px solid var(--ink);transform:rotate(45deg);border-radius:0 0 0 6px}
+.lr-who{display:inline-block;font-family:var(--fd);font-size:16px;letter-spacing:.08em;color:var(--ink);
+background:linear-gradient(180deg,#ffe577,#ffb800);border:3px solid var(--ink);border-radius:999px;padding:1px 12px 3px;
+box-shadow:0 3px 0 var(--ink);transform:rotate(-2deg)}
+.lr .lr-speech p.lr-say{margin:10px 2px 4px;font-weight:800;font-size:16px;line-height:1.4;color:var(--ink)}
+.lr-say b{font-family:var(--fd);font-weight:400;font-size:20px;letter-spacing:.02em;color:#3b2d8f;margin-right:4px}
+.lr-sh{display:flex;align-items:center;gap:8px;margin:12px 0 0;padding:6px 12px 7px;border:3px solid var(--ink);
+border-radius:16px;font-family:var(--fd);font-size:19px;letter-spacing:.03em;color:#fff;box-shadow:0 3px 0 var(--ink)}
+.lr-sh.good{background:linear-gradient(180deg,#6ff0a4,#17b862)}
+.lr-sh.bad{background:linear-gradient(180deg,#ff9a6b,#f0412a)}
+.lr-sh .ol{--sw:5px;--sd:2px}
+.lr-speech ul.lr-items{padding:2px 4px 6px}
+.lr-speech li.lr-item{padding:10px 2px}
+.lr-speech .lr-ic{flex-basis:42px;height:42px;font-size:21px}
+.lr-speech .lr-item .it{font-size:18px}
+.lr-tiles{display:flex;flex-wrap:wrap;gap:14px;margin:4px 0 10px}
+.lr-tile{flex:1 1 180px;min-width:0;background:#fff;border:4px solid var(--ink);border-radius:20px;
+box-shadow:0 6px 0 var(--ink);padding:10px 14px 12px;border-top-width:10px;border-top-color:var(--tc,var(--ink))}
+.lr-tile .tl{font-family:var(--fd);font-size:15px;letter-spacing:.06em;color:#5b5391}
+.lr-tile .tv{font-family:var(--fd);font-size:28px;line-height:1.1;color:var(--ink);overflow-wrap:anywhere}
+.lr .lr-tile p.ts{margin:2px 0 0;font-weight:800;font-size:13px;color:#4d4575}
+.lr-tile.blue{--tc:#2a78d6}.lr-tile.orange{--tc:#eb6834}.lr-tile.up{--tc:var(--green-d)}.lr-tile.down{--tc:var(--red-d)}
+.lr-tile.flat{--tc:#6b6394}
+@media (max-width:640px){.lr-speech{margin:16px 0 6px}.lr-speech::before{left:calc(50% - 13px);top:-17px;
+transform:rotate(135deg)}.lr-h{font-size:25px}}
 """
 
 
@@ -226,3 +256,42 @@ def aspects_html(positives: list[dict], negatives: list[dict]) -> str:
     bad = (f'<section class="lr-card"><div class="lr-band bad"><span class="ol">WHERE YOU CAN DO BETTER</span></div>'
            f'{_items(negatives, "bad")}</section>')
     return f'<div class="lr"><div class="lr-cols">{good}{bad}</div></div>'
+
+
+def subheading_html(text: str, sub: str = "") -> str:
+    """Section title (white Lilita One with ink outline) plus an optional one-line explanation underneath."""
+    tail = f'<p class="lr-hsub">{_e(sub)}</p>' if sub else ""
+    return f'<div class="lr"><div class="lr-h ol" role="heading" aria-level="2">{_e(text)}</div>{tail}</div>'
+
+
+def speech_html(name: str, verdict: dict | None, positives: list[dict], negatives: list[dict],
+                extra: str = "") -> str:
+    """The twin's message as a game-style speech panel (tail pointing at the 3D character on the left):
+    the verdict, "Here's what went well …" (green) and "Where you can do better …" (red, every item with a BETTER
+    tip). ``extra`` = one more line at the end (e.g. what the edited path changes)."""
+    who = f'<span class="lr-who">{_e((name or "YOUR").upper())}\'S TWIN</span>'
+    say = ""
+    if verdict:
+        say = (f'<p class="lr-say"><b>Grade {_e(verdict.get("grade", ""))} – {_e(verdict.get("title", ""))}</b>'
+               f'{_e(verdict.get("text", ""))}</p>')
+    good = bad = ""
+    if positives:
+        good = (f'<div class="lr-sh good" role="heading" aria-level="3"><span aria-hidden="true">▲</span>'
+                f'<span class="ol">Here\'s what went well …</span></div>{_items(positives, "good")}')
+    if negatives:
+        bad = (f'<div class="lr-sh bad" role="heading" aria-level="3"><span aria-hidden="true">▼</span>'
+               f'<span class="ol">Where you can do better …</span></div>{_items(negatives, "bad")}')
+    tail = f'<p class="lr-say">{_e(extra)}</p>' if extra else ""
+    return (f'<div class="lr"><section class="lr-speech" aria-label="Your twin says">{who}{say}{good}{bad}{tail}'
+            f'</section></div>')
+
+
+def tiles_html(tiles: list[dict]) -> str:
+    """Row of chunky number tiles ``{label, value, sub?, tone?: blue|orange|up|down|flat}`` (wraps on phones)."""
+    out = []
+    for t in tiles:
+        tone = t.get("tone") if t.get("tone") in ("blue", "orange", "up", "down", "flat") else ""
+        sub = f'<p class="ts">{_e(t["sub"])}</p>' if t.get("sub") else ""
+        out.append(f'<div class="lr-tile {tone}"><div class="tl">{_e(t.get("label", ""))}</div>'
+                   f'<div class="tv">{_e(t.get("value", ""))}</div>{sub}</div>')
+    return f'<div class="lr"><div class="lr-tiles">{"".join(out)}</div></div>'

@@ -9,7 +9,9 @@ the same tools, so the demo never hangs; ``mode`` says which router was used.
 Tools: ``house`` (buy at age X for price Y) · ``strategy`` (investment styles side by side) · ``pillar3a`` ·
 ``savings`` · ``crisis`` (job loss / market crash) · ``drivers`` (what matters most, tornado) · ``plan`` (how am
 I doing) · ``ride`` (what the film ride / new data showed) · ``decisions`` (what I played) · ``review`` (did I do
-well in the game, what could I have done better: from ``twin.review``) · ``tips`` · ``other``.
+well in the game, what could I have done better: from ``twin.review``) · ``suggest`` (another path for the played
+life: the twin's moves / other life decisions with their effect at 85, from ``twin.alt_path.suggestions``; applying
+one stays a click on the page) · ``tips`` · ``other``.
 
 Environment: ``TWIN_OLLAMA_URL`` (default http://127.0.0.1:11434), ``TWIN_OLLAMA_MODEL`` (default qwen3:4b),
 ``TWIN_OLLAMA_TIMEOUT`` (seconds for one request, default 8), ``TWIN_CHAT_PHRASE=1`` lets the model also re-phrase
@@ -41,7 +43,7 @@ HOUSE_PRICE = 850_000                # default price, same as the game's "Buy a 
 STATUS_TTL = 30.0
 STATUS_TIMEOUT = 1.0
 TOOLS = ("house", "strategy", "pillar3a", "savings", "crisis", "drivers", "plan", "ride", "decisions", "review",
-         "tips", "other")
+         "suggest", "tips", "other")
 TOOL_HELP = {
     "house": "Buy a house or flat (optionally at an age and for a price): net worth, range, credit risk, equity",
     "strategy": "Compare the investment styles (cash, cautious, balanced, bold) for this person",
@@ -53,6 +55,7 @@ TOOL_HELP = {
     "ride": "What the film ride / the newly uploaded data showed",
     "decisions": "The decisions played in the game",
     "review": "Looking back at the game: did I do well, how did I do, what could I have done better",
+    "suggest": "Suggest another path / other life decisions for the played life (move, drop or add a decision)",
     "tips": "General tips: what could I do better?",
     "other": "The question is outside this financial simulation",
 }
@@ -145,6 +148,7 @@ class ChatCtx:
     sim: Callable | None = None                      # (events: tuple, years, a) -> engine.Result (e.g. cached)
     tips_fn: Callable | None = None                  # () -> tipps(...) dict
     drivers_fn: Callable | None = None               # () -> (base, rows) as twin.analysis.tornado
+    suggest_fn: Callable | None = None               # () -> twin.alt_path.suggestions(...) list (played game only)
     _tips: dict | None = field(default=None, repr=False)
 
     def run(self, events=None, years: int | None = None, a: Assumptions | None = None):
@@ -368,6 +372,38 @@ def review_tool(ctx: ChatCtx) -> dict:
                                      "better": [n["title"] for n in neg[:3]]})
 
 
+def suggest_tool(ctx: ChatCtx, n: int = 4) -> dict:
+    """Another path for the played life: the twin's best moves and the instructive costly ones (``alt_path``)."""
+    if ctx.suggest_fn is None:
+        return _out("suggest", "Play the game to the end first – then I can try other paths for your life and show "
+                               "you what each one changes at 85.")
+    items = [s for s in (ctx.suggest_fn() or []) if isinstance(s, dict)]
+    if not items:
+        return _out("suggest", "I tried other paths for your life, but none changes your money in a way worth "
+                               "showing – your choices are hard to beat.")
+    ups = [s for s in items if s.get("impact") == "up"][:max(1, n - 1)]
+    downs = [s for s in items if s.get("impact") == "down"][:1]
+    pick = ups + downs or items[:n]
+
+    def line(s: dict) -> str:
+        arrow = {"up": "▲", "down": "▼"}.get(s.get("impact"), "●")
+        d = s.get("delta")
+        amount = f" ({chf_delta(float(d))} at 85)" if isinstance(d, (int, float)) else ""
+        return f"{arrow} {s.get('emoji', '')} {s.get('title', '')}{amount}".replace("  ", " ")
+
+    text = "I tried other paths for your life with the same random numbers."
+    if ups:
+        text += " Worth a try: " + "; ".join(line(s) for s in ups) + "."
+    if downs:
+        text += " Careful: " + "; ".join(line(s) for s in downs) + "."
+    if not ups and not downs:
+        text += " " + "; ".join(line(s) for s in pick) + "."
+    text += " Click “Try it” under TRY ANOTHER PATH to put one on your timeline – the chart shows the new path."
+    return _out("suggest", text, {}, {"suggestions": [{"id": s.get("id"), "title": s.get("title"),
+                                                       "delta": s.get("delta"), "impact": s.get("impact")}
+                                                      for s in pick]})
+
+
 def tips_tool(ctx: ChatCtx, n: int = 3) -> dict:
     tips = ctx.tips()["tips"][:n]
     text = " ".join(f"{t['icon']} {t['title']}: {t['text']}" for t in tips) or "No tips – your numbers look solid."
@@ -388,7 +424,7 @@ def run_tool(ctx: ChatCtx, tool: str, args: dict | None = None) -> dict:
         return crisis_tool(ctx, args.get("kind") or "job")
     fn = {"strategy": strategy_tool, "pillar3a": pillar3a_tool, "savings": savings_tool, "drivers": drivers_tool,
           "plan": plan_tool, "ride": ride_tool, "decisions": decisions_tool, "review": review_tool,
-          "tips": tips_tool}.get(tool, other_tool)
+          "suggest": suggest_tool, "tips": tips_tool}.get(tool, other_tool)
     return fn(ctx)
 
 
@@ -450,6 +486,11 @@ def route_offline(ctx: ChatCtx, question: str) -> tuple[str, dict]:
             "mistake", "habe ich gut", "habe ich richtig", "habe ich falsch", "gut gemacht", "gut gespielt",
             "besser machen", "besser gemacht", "fehler"):
         return "review", {}
+    if (ctx.suggest_fn is not None or ctx.review) and _has(
+            t, "suggest", "another path", "other path", "different path", "new path", "alternative", "other way",
+            "different life", "other life", "other decision", "what else", "try something", "move my", "vorschlag",
+            "anderen weg", "anderer weg", "alternativ", "andere entscheidung"):
+        return "suggest", {}
     if _has(t, "house", "home", "flat", "apartment", "condo", "property", "real estate", "mortgage",
             "haus", "wohnung", "eigenheim", "immobilie", "hypothek", "eigentum"):
         return "house", {"age": parse_age(question, ctx.person.age), "price": parse_price(question)}
@@ -567,8 +608,11 @@ def review_greeting(ctx: ChatCtx) -> dict:
     if neg:
         lines.append("Where you could have done better:")
         lines += [f"{i}. {n['icon']} **{n['title']}** – {n['text']} Better: {n['better']}" for i, n in enumerate(neg, 1)]
-    lines.append(f"Ask me anything, e.g. “What could I have done better?” or “What if I buy a house at "
-                 f"{max(ctx.person.age + 5, 30)}?” {DISCLAIMER}")
+    if ctx.suggest_fn is not None:
+        lines.append("Want to see a different life? Drag a choice on your timeline, add one, or let me suggest "
+                     "another path below – the chart at the bottom shows what it changes.")
+    lines.append(f"Ask me anything, e.g. “What could I have done better?”, “Suggest another path” or “What if I buy "
+                 f"a house at {max(ctx.person.age + 5, 30)}?” {DISCLAIMER}")
     return {"text": "\n\n".join(lines), "bubble": f"Grade {v['grade']} – {v['title']}", "tool": "review",
             "mode": "offline", "numbers": {"grade": v["grade"], "better": [n["title"] for n in neg]}}
 
@@ -598,7 +642,7 @@ def greeting(ctx: ChatCtx, n: int = 3) -> dict:
 
 def suggestions(ctx: ChatCtx) -> list[str]:
     if ctx.review:
-        return ["What could I have done better?", "Did I do well?",
+        return ["What could I have done better?", "Suggest another path", "Did I do well?",
                 f"What if I buy a house at {max(ctx.person.age + 5, 30)}?", "Which investment style suits me?",
                 "What if I lose my job?"]
     return [f"What if I buy a house at {max(ctx.person.age + 5, 30)}?", "Is pillar 3a worth it?",

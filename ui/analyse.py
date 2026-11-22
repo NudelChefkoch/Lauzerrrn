@@ -1,7 +1,9 @@
 """Analysis mode: dashboard with all the controls (English GUI)."""
 from __future__ import annotations
 
+import copy
 import html
+import json
 import logging
 import re
 from dataclasses import asdict, replace
@@ -19,12 +21,26 @@ from twin.config import (MARKET_PRESETS, STATE_NAMES, STRATEGY_PRESETS, Assumpti
                          Shocks, Shortfall)
 from twin.engine import PCTS, simulate
 from twin.lifechart import chart_data, life_chart
-from twin.lifechart.review_view import aspects_html, heading_html, hero_html, style_block, timeline_html
-from twin.review import review
+from twin import game as game_rules
+from twin.lifechart.review_view import (heading_html, hero_html, speech_html, style_block, subheading_html, tiles_html,
+                                        timeline_html)
+from twin.review import money, money_delta, review
 from twin.tipps import STYLES, tipps
 from twin.scenarios import (PRESET_LABELS, PRESETS, ExpenseChange, HouseBuy, Job, JobChange, MarketCrash, OneOff,
                             SelfEmployment, Study, Unemployment, describe, preset)
 
+# another path for the played life (engine + editable timeline / suggestions / chart component). Guarded: while these
+# modules are missing or broken the page shows today's read-only timeline instead.
+try:
+    from twin import alt_path as alt_mod
+except Exception:                                   # pragma: no cover - depends on the parallel work
+    logging.getLogger(__name__).exception("twin.alt_path unavailable – read-only timeline")
+    alt_mod = None
+try:
+    from twin.lifereview import lifereview as lifereview_component
+except Exception:                                   # pragma: no cover
+    logging.getLogger(__name__).exception("twin.lifereview unavailable – HTML fallbacks")
+    lifereview_component = None
 
 # chart colours (validated categorical slots 1/2 + blue sequential steps for the bands)
 BLUE, ORANGE = "#2a78d6", "#eb6834"
@@ -120,11 +136,20 @@ with st.sidebar:
 a = Assumptions(market=market, strategy=strategy, macro=macro, shortfall=shortfall, shocks=shocks)
 
 # ================================================================ top: your life review + your twin
-# After a played game the page STARTS with the life review: the timeline of the choices (green ▲ / red ▼ / grey ●),
-# what went well and where to do better (twin.review), then the player's own 3D character on its podium as the agent
-# to talk to (chat on the right). Without a played game: the timeline of this page's life plan and the chat as before.
+# After a played game the page STARTS with the life review, in this order:
+#   hero → (1) YOUR TIMELINE: start age … 85, every choice AND its follow-up events; drag / remove / add to build
+#   another path (twin/lifereview component, twin/alt_path engine) → (2) YOUR TWIN SAYS: the player's own 3D character
+#   on its podium delivers what went well and where to do better (twin.review), chat underneath → (3) TRY ANOTHER PATH:
+#   the twin's suggestions (▲ more money at 85 / ▼ less) – "Try it" puts one on the timeline → (4) EXPECTED NET WORTH:
+#   the played path vs the new path (Juli's chart). Without a played game: the timeline of this page's life plan and
+#   the chat as before. Every new piece is guarded: if alt_path / lifereview are missing or fail, the page falls back
+#   to today's read-only timeline and never breaks.
 EVENT_EMOJI = {"Study": "🎓", "Job": "💼", "JobChange": "🚀", "Unemployment": "📉", "SelfEmployment": "🧑‍💻",
                "HouseBuy": "🏡", "OneOff": "🧾", "ExpenseChange": "🧾", "MarketCrash": "💥", "Retirement": "🪑"}
+EMPTY_ALT = {"moves": {}, "removed": [], "added": []}
+ALT_ACTIONS = ("move", "remove", "add", "restore", "reset", "apply")
+SEEN_MAX = 200                    # remembered component nonces (each action is applied exactly once)
+log = logging.getLogger(__name__)
 
 
 def played_decisions(sess) -> list[dict]:
@@ -144,7 +169,7 @@ def life_review(sess) -> dict | None:
     try:
         return review(sess)
     except Exception:
-        logging.getLogger(__name__).exception("life review failed")
+        log.exception("life review failed")
         return None
 
 
@@ -176,8 +201,235 @@ def show_podium(avatar: dict, bubble: str) -> bool:
         podium(avatar, bubble=bubble, height=420, key="podium")
         return True
     except Exception:
-        logging.getLogger(__name__).exception("3D podium unavailable – SVG avatar instead")
+        log.exception("3D podium unavailable – SVG avatar instead")
         return False
+
+
+# ---------------------------------------------------------------- another path (alt_path engine + lifereview UI)
+def alt_call(name: str, *args, default=None, **kw):
+    """``twin.alt_path.<name>(...)`` – or ``default`` if the module / function is missing or fails (logged)."""
+    fn = getattr(alt_mod, name, None) if alt_mod is not None else None
+    if fn is None:
+        return default
+    try:
+        return fn(*args, **kw)
+    except Exception:
+        log.exception("alt_path.%s failed", name)
+        return default
+
+
+def clean_alt(alt) -> dict:
+    """Alt state as plain JSON-safe dict ``{"moves": {gid: age}, "removed": [gid], "added": [{id, key, age, params}]}``."""
+    alt = alt if isinstance(alt, dict) else {}
+    moves = {}
+    for k, v in dict(alt.get("moves") or {}).items():
+        try:
+            moves[str(k)] = int(round(float(v)))
+        except (TypeError, ValueError):
+            continue
+    removed = list(dict.fromkeys(str(g) for g in alt.get("removed") or []))
+    added = []
+    for a_ in alt.get("added") or []:
+        if isinstance(a_, dict) and a_.get("key"):
+            try:
+                age_ = int(round(float(a_.get("age"))))
+            except (TypeError, ValueError):
+                continue
+            iid = str(a_.get("id") or "")
+            if not iid or any(x["id"] == iid for x in added):
+                iid = next_added_id({"added": added})
+            added.append({"id": iid, "key": str(a_["key"]), "age": age_,
+                          "params": {str(n): v for n, v in dict(a_.get("params") or {}).items()}})
+    return {"moves": moves, "removed": removed, "added": added}
+
+
+def alt_empty(alt: dict) -> bool:
+    return not (alt.get("moves") or alt.get("removed") or alt.get("added"))
+
+
+def merge_edit(alt: dict, edit: dict) -> dict:
+    """``alt_path.apply_edit`` (merge a partial alt into the state); a local merge if the engine lacks it."""
+    out = alt_call("apply_edit", copy.deepcopy(alt), copy.deepcopy(edit or {}))
+    if isinstance(out, dict):
+        return clean_alt(out)
+    out = copy.deepcopy(alt)
+    out["moves"].update(dict((edit or {}).get("moves") or {}))
+    out["removed"] += [g for g in (edit or {}).get("removed") or [] if g not in out["removed"]]
+    for a_ in (edit or {}).get("added") or []:
+        out["added"] = [x for x in out["added"] if x.get("id") != a_.get("id")] + [a_]
+    return clean_alt(out)
+
+
+def restore_item(alt: dict, gid: str) -> dict:
+    """Undo every change to one item: back to its played age, no longer removed, an added one dropped."""
+    out = copy.deepcopy(alt)
+    out["moves"].pop(gid, None)
+    out["removed"] = [g for g in out["removed"] if g != gid]
+    out["added"] = [a_ for a_ in out["added"] if a_.get("id") != gid]
+    return out
+
+
+def next_added_id(alt: dict) -> str:
+    nums = [int(m.group(1)) for a_ in alt.get("added") or [] if (m := re.fullmatch(r"a(\d+)", str(a_.get("id"))))]
+    return f"a{max(nums, default=0) + 1}"
+
+
+def fmt_age(x) -> str:
+    v = float(x)
+    return str(int(v)) if v.is_integer() else f"{v:.1f}"
+
+
+def handle_alt_action(act, start_age: int, end_age: int, from_component: bool = False) -> bool:
+    """Apply one action of the lifereview component (or of ``st.session_state["alt_action"]``) to the alt state.
+
+    Each nonce is applied only once (the component keeps returning its last value on every rerun). Returns True if
+    the state changed; the twin then announces the new path in the chat."""
+    if not isinstance(act, dict) or act.get("action") not in ALT_ACTIONS:
+        return False
+    nonce = act.get("nonce")
+    if from_component and nonce is None:          # a component value without a nonce would re-apply on every rerun
+        return False
+    seen = st.session_state.setdefault("alt_seen", [])
+    if nonce is not None:
+        if nonce in seen:
+            return False
+        seen.append(nonce)
+        del seen[:-SEEN_MAX]
+    alt = clean_alt(st.session_state.get("alt_path"))
+    titles = st.session_state.get("alt_titles", {})
+    kind, gid = act["action"], str(act.get("id", ""))
+    name = titles.get(gid, "this choice")
+
+    def age_of(v) -> int:
+        try:
+            return int(min(max(round(float(v)), start_age), end_age))
+        except (TypeError, ValueError):
+            return start_age
+
+    note = None
+    if kind == "move" and gid:
+        age_ = age_of(act.get("age"))
+        if any(a_["id"] == gid for a_ in alt["added"]):          # an added chip: change its age
+            new = copy.deepcopy(alt)
+            for a_ in new["added"]:
+                if a_["id"] == gid:
+                    a_["age"] = age_
+        else:
+            new = merge_edit(alt, {"moves": {gid: age_}})
+        note = f"I moved {name} to age {age_}."
+    elif kind == "remove" and gid:
+        if any(a_["id"] == gid for a_ in alt["added"]):
+            new = restore_item(alt, gid)
+        else:
+            new = merge_edit(alt, {"removed": [gid]})
+        note = f"I took {name} out of your life."
+    elif kind == "add" and act.get("key"):
+        addable = {o.get("key"): o for o in st.session_state.get("alt_addable") or [] if isinstance(o, dict)}
+        key_ = str(act["key"])
+        if addable and key_ not in addable:
+            return False
+        age_ = age_of(act.get("age"))
+        params = act.get("params") if isinstance(act.get("params"), dict) else {}
+        new = merge_edit(alt, {"added": [{"id": next_added_id(alt), "key": key_, "age": age_, "params": params}]})
+        o = addable.get(key_, {})
+        note = f"I added {(o.get('emoji', '') + ' ' + o.get('title', key_)).strip()} at age {age_}."
+    elif kind == "restore" and gid:
+        new = restore_item(alt, gid)
+        note = f"{name[:1].upper() + name[1:]} is back where you played it."
+    elif kind == "reset":
+        new = copy.deepcopy(EMPTY_ALT)
+        note = "Back to the life you played."
+    elif kind == "apply":
+        sugg = (st.session_state.get("alt_sugg") or (None, []))[1]
+        s_ = next((x for x in sugg if isinstance(x, dict) and str(x.get("id")) == gid), None)
+        if s_ is None or not isinstance(s_.get("edit"), dict):
+            return False
+        new = merge_edit(alt, s_["edit"])
+        note = f"I tried {(s_.get('emoji', '') + ' ' + s_.get('title', '')).strip()} on your timeline."
+    else:
+        return False
+    new = clean_alt(new)
+    if new == alt:
+        return False
+    st.session_state["alt_path"] = new
+    st.session_state["alt_note"] = note
+    return True
+
+
+def item_title(it: dict) -> str:
+    return f"{it.get('emoji', '')} {it.get('title', '')}".strip()
+
+
+def changes_line(items: list[dict]) -> str:
+    """'Your new path: moved 💼 Job change 32 → 35 · removed … · added …' (empty when nothing changed)."""
+    parts = []
+    for it in items:
+        if it.get("kind") == "added":
+            parts.append(f"added {item_title(it)} at {fmt_age(it.get('alt_age') or it.get('age'))}")
+        elif it.get("removed") and it.get("kind") != "event":
+            parts.append(f"removed {item_title(it)}")
+        elif it.get("alt_age") is not None and it.get("kind") == "decision":
+            parts.append(f"moved {item_title(it)} {fmt_age(it['age'])} → {fmt_age(it['alt_age'])}")
+    return ("✏️ Your new path: " + " · ".join(parts)) if parts else ""
+
+
+def html_items(items: list[dict]) -> list[dict]:
+    """timeline_items → chips for the read-only HTML timeline (fallback): new ages, removed ones left out."""
+    out = []
+    for it in items:
+        if it.get("removed"):
+            continue
+        moved = it.get("alt_age") is not None
+        age_ = float(it.get("alt_age") if moved else it.get("age", 0))
+        note = ("added by you" if it.get("kind") == "added" else
+                f"moved from {fmt_age(it['age'])}" if moved else None)
+        out.append({"age": int(age_) if age_.is_integer() else round(age_, 1), "emoji": it.get("emoji") or "📌",
+                    "title": it.get("title", ""), "impact": it.get("impact"), "note": note})
+    return out
+
+
+def show_component(view: str, data: dict, key: str, height: int):
+    """lifereview component view; ``False`` if it is not available (caller shows the fallback)."""
+    if lifereview_component is None:
+        return False
+    try:
+        return lifereview_component(view=view, data=data, key=key, height=height)
+    except Exception:
+        log.exception("lifereview component (%s) failed – fallback", view)
+        return False
+
+
+def pct_or_none(x) -> str | None:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return f"{v:.0%}" if 0 <= v <= 1 else f"{v:,.0f}"
+
+
+def paths_figure(paths: dict) -> go.Figure:
+    """Fallback chart (plotly) from ``alt_path.simulate_paths``: band + medians + the played life."""
+    ages = paths["ages"]
+    f = go.Figure()
+    for key_, colour, name in (("played", BLUE, "Your path"), ("alt", ORANGE, paths.get("label") or "New path")):
+        s_ = paths.get(key_)
+        if not s_:
+            continue
+        rgb = "42,120,214" if key_ == "played" else "235,104,52"
+        f.add_trace(go.Scatter(x=ages, y=s_["p95"], line=dict(width=0), showlegend=False, hoverinfo="skip"))
+        f.add_trace(go.Scatter(x=ages, y=s_["p5"], line=dict(width=0), fill="tonexty", fillcolor=f"rgba({rgb},.14)",
+                               name=f"{name}: 90 % of lives", hoverinfo="skip"))
+        f.add_trace(go.Scatter(x=ages, y=s_["p50"], line=dict(width=3, color=colour,
+                                                              dash="solid" if key_ == "played" else "dash"),
+                               name=f"{name} (median)", hovertemplate="%{y:,.0f} CHF"))
+    life = (paths.get("played") or {}).get("life")
+    if life:
+        f.add_trace(go.Scatter(x=ages, y=life, line=dict(width=2, color="#e2558f"), name="Your life",
+                               hovertemplate="%{y:,.0f} CHF"))
+    f.update_layout(height=420, hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10),
+                    legend=dict(orientation="h", y=-0.18), xaxis=dict(title="Age", showgrid=False),
+                    yaxis=dict(title="CHF", tickformat=",.0f", gridcolor="rgba(128,128,128,0.15)"))
+    return f
 
 
 events = tuple(st.session_state.events)
@@ -185,22 +437,86 @@ is_me = pid == "__me__" and game is not None
 cfg = dict(getattr(game, "avatar", None) or {}) if is_me else {"name": person.name}
 ride = getattr(game, "ride_data", None) if is_me else None
 rv = life_review(game) if is_me else None
+alt = None                      # alt state of the played game (None without a played game or without alt_path)
+alt_items: list[dict] | None = None
+paths = None
 
 st.markdown(style_block(), unsafe_allow_html=True)
 if rv:
     f_ = rv["facts"]
     n_ = f_["decisions"]
-    st.markdown(hero_html("YOUR LIFE REVIEW", f"{cfg.get('name') or person.name} · age {f_['start_age']} → "
-                                              f"{f_['end_age']} · {n_} choice{'s' if n_ != 1 else ''}",
+    start_age = int(f_["start_age"])
+    end_age = max(int(getattr(game_rules, "END_AGE", 85)), int(f_["end_age"]))
+    st.markdown(hero_html("YOUR LIFE REVIEW", f"{cfg.get('name') or person.name} · age {start_age} → "
+                                              f"{end_age} · {n_} choice{'s' if n_ != 1 else ''}",
                           None), unsafe_allow_html=True)       # the verdict comes from the twin (below), timeline first
-    st.markdown(timeline_html(rv["timeline"], f_["start_age"], f_["end_age"], "YOUR TIMELINE",
-                              empty="You drove through life without a single decision."), unsafe_allow_html=True)
-    st.markdown(aspects_html(rv["positives"], rv["negatives"]), unsafe_allow_html=True)
+
+    # ---- alt state: one per played game (reset when a new game is played)
+    alt_key = (id(game), getattr(game, "seed", None), person,
+               tuple((h.get("turn"), h.get("key")) for h in getattr(game, "history", None) or []))
+    if st.session_state.get("alt_path_key") != alt_key:
+        st.session_state["alt_path"] = copy.deepcopy(EMPTY_ALT)
+        st.session_state["alt_path_key"] = alt_key
+        st.session_state.pop("alt_sugg", None)
+        st.session_state.pop("alt_note", None)
+    if alt_mod is not None:
+        st.session_state["alt_addable"] = alt_call("addable", game, default=None) or []
+        pending = st.session_state.pop("alt_action", None)       # programmatic action (tests, other widgets)
+        if pending is not None:
+            handle_alt_action(pending, start_age, end_age)
+        alt = clean_alt(st.session_state.get("alt_path"))
+        alt_items = alt_call("timeline_items", game, None if alt_empty(alt) else alt, default=None)
+        if not isinstance(alt_items, list):
+            alt_items = None
+    if alt_items is not None:
+        st.session_state["alt_titles"] = {str(it.get("id")): item_title(it) for it in alt_items}
+
+    # ---- (1) the timeline, start age … 85: every choice and its follow-up events, editable
+    shown = False
+    if alt_items is not None:
+        act = show_component("timeline", {"start_age": start_age, "end_age": end_age, "items": alt_items,
+                                          "addable": st.session_state.get("alt_addable") or [],
+                                          "has_alt": not alt_empty(alt)}, key="lr_timeline", height=380)
+        if act is not False:
+            shown = True
+            if handle_alt_action(act, start_age, end_age, from_component=True):
+                st.rerun()
+        else:
+            st.markdown(timeline_html(html_items(alt_items), start_age, end_age, "YOUR TIMELINE",
+                                      empty="You drove through life without a single decision."),
+                        unsafe_allow_html=True)
+            shown = True
+        line = changes_line(alt_items)
+        st.caption(line or "Drag a choice to another age, press Delete to take it out, or “+ Add event” – your twin "
+                           "re-simulates the new path below.")
+    if not shown:                                    # today's read-only timeline (alt_path not available)
+        st.markdown(timeline_html(rv["timeline"], start_age, end_age, "YOUR TIMELINE",
+                                  empty="You drove through life without a single decision."), unsafe_allow_html=True)
+    if alt is not None:
+        paths = alt_call("simulate_paths", game, alt, default=None)
+        if not (isinstance(paths, dict) and paths.get("ages") and paths.get("played")):
+            paths = None
 else:
     st.markdown(hero_html("YOUR FINANCIAL TWIN", f"{person.name}, {person.age} · {years} years ahead", None,
                           tag="ANALYSIS"), unsafe_allow_html=True)
     st.markdown(timeline_html(plan_items(events, person.age), person.age, person.age + years, "YOUR PLAN",
                               empty="No events yet – add some in the life plan below."), unsafe_allow_html=True)
+
+
+def alt_suggestions() -> list[dict]:
+    """The twin's suggestions for the current alt state (computed once per state, kept in the session)."""
+    if alt is None:
+        return []
+    k = (st.session_state.get("alt_path_key"), json.dumps(alt, sort_keys=True, default=str))
+    cached = st.session_state.get("alt_sugg")
+    if cached and cached[0] == k:
+        return cached[1]
+    with st.spinner("Your twin is trying other paths …"):
+        items = alt_call("suggestions", game, None if alt_empty(alt) else alt, n=6, default=None)
+    items = [s_ for s_ in items if isinstance(s_, dict) and s_.get("id") is not None] if isinstance(items, list) else []
+    st.session_state["alt_sugg"] = (k, items)
+    return items
+
 
 chat_ctx = ChatCtx(
     person=person, years=years, a=a, events=events, calib=calib, n_paths=CHAT_PATHS, seed=seed,
@@ -208,7 +524,8 @@ chat_ctx = ChatCtx(
     ride=ride if isinstance(ride, dict) else None, review=rv,
     sim=lambda ev, yrs, a_: run(person, tuple(ev), yrs, a_, CHAT_PATHS, seed),
     tips_fn=lambda: run_tips(person, years, a, seed),
-    drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed))
+    drivers_fn=lambda: run_tornado(person, events, years, a, 400, seed),
+    suggest_fn=alt_suggestions if (rv and alt is not None) else None)
 chat_key = (pid, person, rv["verdict"]["text"] if rv else None)
 if st.session_state.get("twin_chat_key") != chat_key:
     g = greeting(chat_ctx)
@@ -216,6 +533,19 @@ if st.session_state.get("twin_chat_key") != chat_key:
                                    "tool": g.get("tool")}]
     st.session_state.twin_chat_key = chat_key
     st.session_state.twin_pick_n = st.session_state.get("twin_pick_n", 0) + 1
+
+# the twin announces every change of the new path in the chat (and in its speech bubble)
+alt_metrics = (paths or {}).get("metrics") or {}
+if rv and st.session_state.get("alt_note"):
+    note = st.session_state.pop("alt_note")
+    if paths and paths.get("alt") and alt_metrics.get("delta_end") is not None:
+        note += (f" With the same random numbers your new path ends at {money(alt_metrics['alt_end'])} at {end_age} – "
+                 f"{money_delta(alt_metrics['delta_end'])} compared with the life you played.")
+    elif alt is not None and alt_empty(alt):
+        note += " The chart shows your played life again."
+    st.session_state.twin_chat.append({"role": "assistant", "content": f"{note} Not investment advice.",
+                                       "mode": "offline", "tool": "alt_path"})
+    st.session_state.twin_chat = st.session_state.twin_chat[-40:]
 
 
 def ask(question: str) -> None:
@@ -225,6 +555,33 @@ def ask(question: str) -> None:
     st.session_state.twin_chat.append({"role": "assistant", "content": out["text"], "mode": out["mode"],
                                        "tool": out["tool"]})
     st.session_state.twin_chat = st.session_state.twin_chat[-40:]
+
+
+def chat_box(height: int) -> None:
+    """The conversation, the suggestion pills and the input (answers come from the simulation)."""
+    box = st.container(height=height)
+    pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
+                    label_visibility="collapsed")
+    question = st.chat_input("Ask your twin – e.g. “What could I have done better?”" if rv else
+                             "Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
+    if pick:
+        ask(pick)
+        st.session_state.twin_pick_n += 1
+        st.rerun()
+    if question:
+        ask(question)
+    with box:
+        for msg in st.session_state.twin_chat:
+            with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
+                st.markdown(msg["content"])
+
+
+def llm_caption() -> None:
+    llm = status()
+    st.caption(f"🧠 Local model {llm['model']} picks the calculation; the numbers come from the simulation."
+               if llm["available"] else
+               "⚙️ Offline mode: rule-based routing. Start Ollama for the local model – the numbers "
+               "come from the simulation either way.")
 
 
 st.markdown("""<style>
@@ -237,40 +594,128 @@ st.markdown("""<style>
 .twin-av svg { max-width: 150px; height: auto; }
 </style>""", unsafe_allow_html=True)
 
-st.markdown(heading_html("TALK TO YOUR TWIN" if rv else "YOUR TWIN"), unsafe_allow_html=True)
-with st.container(border=True):
-    av_col, chat_col = st.columns([1.15, 2.2] if rv else [1, 2.6], gap="large")
-    with chat_col:
-        box = st.container(height=400 if rv else 330)
-        pick = st.pills("Try asking", suggestions(chat_ctx), key=f"twin_pick_{st.session_state.twin_pick_n}",
-                        label_visibility="collapsed")
-        question = st.chat_input("Ask your twin – e.g. “What could I have done better?”" if rv else
-                                 "Ask your twin – e.g. “Is pillar 3a worth it?”", key="twin_q")
-        if pick:
-            ask(pick)
-            st.session_state.twin_pick_n += 1
-            st.rerun()
-        if question:
-            ask(question)
-        with box:
-            for msg in st.session_state.twin_chat:
-                with st.chat_message(msg["role"], avatar="🙋" if msg["role"] == "assistant" else None):
-                    st.markdown(msg["content"])
-    with av_col:
+
+def svg_avatar(bubble: str) -> None:
+    av = avatar_from_cfg(cfg, person.name)
+    st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble)}</div>'
+                f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
+
+
+if rv:
+    # ---- (2) the twin speaks: 3D character on its podium (left), its message = positives & negatives (right)
+    st.markdown(subheading_html("YOUR TWIN SAYS"), unsafe_allow_html=True)
+    verdict_line = f"Grade {rv['verdict']['grade']} – {rv['verdict']['title']}"
+    extra = ""
+    if paths and paths.get("alt") and alt_metrics.get("delta_end") is not None:
+        extra = (f"🔀 Your new path: {money_delta(alt_metrics['delta_end'])} at {end_age} compared with the life you "
+                 f"played – see the chart below.")
+    with st.container(border=True):
+        row = st.container()                    # filled after the chat ran, so the bubble shows the newest answer
+        chat_box(360)
         last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
-        # the bubble follows the conversation: the grade first, then the twin's latest answer (short)
-        verdict_line = f"Grade {rv['verdict']['grade']} – {rv['verdict']['title']}" if rv else ""
         bubble = verdict_line if len(st.session_state.twin_chat) <= 1 else bubble_text(last or {})
-        on_podium = bool(rv) and show_podium(cfg, bubble)
-        if not on_podium:
-            av = avatar_from_cfg(cfg, person.name)
-            st.markdown(f'<div class="twin-av"><div class="twin-bubble">{html.escape(bubble_text(last or {}))}</div>'
-                        f'{avatar_svg(av, size=150, uid="twin")}</div>', unsafe_allow_html=True)
-        llm = status()
-        st.caption(f"🧠 Local model {llm['model']} picks the calculation; the numbers come from the simulation."
-                   if llm["available"] else
-                   "⚙️ Offline mode: rule-based routing. Start Ollama for the local model – the numbers "
-                   "come from the simulation either way.")
+        with row:
+            av_col, say_col = st.columns([1.05, 2.2], gap="medium")
+            with av_col:
+                if not show_podium(cfg, bubble):
+                    svg_avatar(bubble_text(last or {}))
+                llm_caption()
+            with say_col:
+                st.markdown(speech_html(cfg.get("name") or person.name, rv["verdict"], rv["positives"],
+                                        rv["negatives"], extra), unsafe_allow_html=True)
+
+    # ---- (3) try another path: the twin's suggestions (▲ more money at 85 / ▼ less), "Try it" applies one
+    if alt is not None:
+        st.markdown(subheading_html(
+            "TRY ANOTHER PATH",
+            "Your twin re-ran your life with one change at a time – same random numbers. ▲ = more money at "
+            f"{end_age}, ▼ = less. “Try it” puts the change on your timeline; drag chips there for your own path."),
+            unsafe_allow_html=True)
+        sugg = alt_suggestions()
+        act = show_component("suggestions", {"items": sugg, "loading": False}, key="lr_sugg", height=330)
+        if act is False:                                  # fallback: native cards with a button each
+            if not sugg:
+                st.info("No other path worth showing – your choices are hard to beat.", icon="🏆")
+            cols = st.columns(3)
+            for i, s_ in enumerate(sugg):
+                with cols[i % 3].container(border=True):
+                    arrow = {"up": "▲", "down": "▼"}.get(s_.get("impact"), "●")
+                    d_ = s_.get("delta")
+                    amount = f" · {money_delta(d_)} at {end_age}" if isinstance(d_, (int, float)) else ""
+                    st.markdown(f"**{arrow} {s_.get('emoji', '')} {s_.get('title', '')}**{amount}  \n"
+                                f"{s_.get('text', '')}")
+                    if st.button("Try it", key=f"alt_try_{s_['id']}", width="stretch"):
+                        if handle_alt_action({"action": "apply", "id": s_["id"]}, start_age, end_age):
+                            st.rerun()
+        elif handle_alt_action(act, start_age, end_age, from_component=True):
+            st.rerun()
+        if st.button("↺ Reset to the life you played", key="alt_reset", disabled=alt_empty(alt)):
+            if handle_alt_action({"action": "reset"}, start_age, end_age):
+                st.rerun()
+
+    # ---- (4) expected net worth: the played path vs the new path (Juli's chart), at the very bottom of the review
+    if paths:
+        has_alt = bool(paths.get("alt"))
+        st.markdown(subheading_html(
+            "EXPECTED NET WORTH",
+            f"Median of the simulated lives from {start_age} to {end_age} with the band where 90 % of them end up; "
+            "pink = the life you played" + ("; orange = your new path." if has_alt else
+                                            ". Change your timeline to compare another path.")),
+            unsafe_allow_html=True)
+        pe, ae, de = alt_metrics.get("played_end"), alt_metrics.get("alt_end"), alt_metrics.get("delta_end")
+        tiles = []
+        if pe is not None:
+            tiles.append({"label": f"YOUR PATH AT {end_age}", "value": money(pe), "sub": "median net worth",
+                          "tone": "blue"})
+        if has_alt and ae is not None and de is not None:
+            tiles.append({"label": f"NEW PATH AT {end_age}", "value": money(ae),
+                          "sub": f"{money_delta(de)} vs. your path", "tone": "up" if de > 0 else "down" if de < 0
+                          else "flat"})
+        pc, ac_ = pct_or_none(alt_metrics.get("played_credit")), pct_or_none(alt_metrics.get("alt_credit"))
+        if pc is not None:
+            tiles.append({"label": "NEEDS CREDIT", "value": pc if not (has_alt and ac_) else f"{pc} → {ac_}",
+                          "sub": "share of lives with a loan at some point" + (" (your path → new path)"
+                                                                                if has_alt and ac_ else ""),
+                          "tone": "orange" if has_alt else "flat"})
+        if tiles:
+            st.markdown(tiles_html(tiles), unsafe_allow_html=True)
+        summary = (f"New path: {money_delta(de)} at {end_age} vs. your path" if has_alt and de is not None else
+                   f"Your path: {money(pe)} at {end_age} (median)" if pe is not None else "")
+        try:                                   # the component's own marker format (played / alt ages)
+            from twin.lifereview import chart_markers
+            markers = chart_markers(alt_items or [], has_alt=has_alt)
+        except Exception:
+            markers = [{"age": float(it.get("alt_age") if it.get("alt_age") is not None else it.get("age", 0)),
+                        "path": "alt" if it.get("alt_age") is not None or it.get("kind") == "added" else "played",
+                        "emoji": it.get("emoji") or "", "label": it.get("title") or ""}
+                       for it in alt_items or [] if not it.get("removed")]
+        if show_component("chart", {**paths, "markers": markers, "summary": summary, "start_age": start_age,
+                                    "end_age": end_age}, key="lr_chart", height=460) is False:
+            st.plotly_chart(paths_figure(paths), width="stretch", theme="streamlit")
+            if summary:
+                st.markdown(f"**{summary}**")
+        st.caption("Same random numbers for both paths (common random numbers), so the difference comes only from "
+                   "your changes. Net worth = cash + investments + home − debts. Not investment advice.")
+else:
+    st.markdown(heading_html("YOUR TWIN"), unsafe_allow_html=True)
+    with st.container(border=True):
+        av_col, chat_col = st.columns([1, 2.6], gap="large")
+        with chat_col:
+            chat_box(330)
+        with av_col:
+            last = next((m for m in reversed(st.session_state.twin_chat) if m["role"] == "assistant"), None)
+            svg_avatar(bubble_text(last or {}))
+            llm_caption()
+
+
+# ================================================================ twin vs. reality (backtest on the challenge data)
+# fitted on months 1–18 of all 1,200 profiles, checked against the real balance of month 24 (aggregates only)
+try:
+    from twin.backtest import backtest
+    from twin.backtest_view import backtest_card_html
+    st.markdown(backtest_card_html(backtest()), unsafe_allow_html=True)
+except Exception:                                   # never break the page for the validation card
+    logging.getLogger(__name__).exception("backtest card unavailable")
 
 # ================================================================ explore more (the full dashboard)
 st.header("🔍 Explore more")
@@ -529,7 +974,7 @@ with tab3:
 with tab4:
     st.markdown("All numbers that drive the result. **Calibrated** = estimated from the person's 24 months or their "
                 "group; **assumption** = set by us, adjustable in the menu on the left.")
-    sp = calib.states[person.state]
+    sp = calib.states.get(person.group, calib.states[person.state])     # part-timers have their own seasonality
     rows = [
         ("Typical month (net flow)", chf(person.mu), "calibrated", f"± {chf(person.mu_se)} standard error"),
         ("Fluctuation per month", chf(person.sigma), "calibrated", "normal months; Dec/Feb/Aug wider"),

@@ -72,17 +72,30 @@ on the analysis page. "Get married" plays its own wedding scene (chapel, guests,
 **End of the game → life review** (analysis page):
 - The game ends with the financial facts; "YOUR LIFE REVIEW ▶" sends `{"action": "analyse"}` and the analysis page
   (`ui/analyse.py`) starts with the review, in the game's style (Lilita One / Nunito, chunky ink-bordered cards):
-  1. **Timeline** of every choice on a horizontal age axis (after Juli's financial-twin timeline): green ▲ = better for
-     your money, red ▼ = costs you money, grey ● = about the same (numbers only in the tooltip).
-  2. **What went well / Where you can do better**: two columns of cards, every negative with a "Better:" tip.
-  3. **Talk to your twin**: your own 3D character on its podium (`twin.three_d.podium`, SVG fallback) on the left,
-     the chat on the right. The twin greets with the verdict (grade A–E) and the 2 biggest improvements; questions like
-     "Did I do well?" / "What could I have done better?" go to the chat tool `review`.
-  Below, under "Explore more", the full dashboard stays as before. Without a played game the page shows the timeline
-  of its own life plan and the chat as before.
+  1. **Your timeline** from your starting age to 85 with every choice AND its follow-up events (degree finished, child
+     moves out, retirement at 70, …): green ▲ = better for your money, red ▼ = costs you money, grey ● = about the
+     same. It is editable (`twin/lifereview`): drag a choice to another age (its events move along, a ghost stays at
+     the played age), press Delete to take it out, "+ Add event" for another life decision (age + card values).
+  2. **Your twin says**: your own 3D character on its podium (`twin.three_d.podium`, SVG fallback) delivers the
+     verdict (grade A–E), "Here's what went well …" and "Where you can do better …" (every negative with a BETTER
+     tip) as a game-style speech panel; the chat sits underneath ("Did I do well?" → tool `review`, "Suggest another
+     path" → tool `suggest`). Every change of the new path is announced by the twin in the chat.
+  3. **Try another path**: the twin's suggestions (`twin.alt_path.suggestions`: move a choice ±3/±5 years, drop a
+     costly one, add one you did not take) – the best ▲ ones and at least two instructive ▼ ones, each with its CHF
+     effect at 85. "Try it" puts it on the timeline; "↺ Reset" brings the played life back.
+  4. **Expected net worth** (Juli's chart): median with the p5–p95 band of your played path, the life you saw (pink)
+     and, once you edited something, the new path (orange), event markers, hover readout per age and the line
+     "New path: +CHF X at 85 vs. your path". Same seed for both paths (common random numbers).
+  The alternative path is a plain JSON dict in `st.session_state["alt_path"]` (`{"moves": {id: age}, "removed": [id],
+  "added": [{id, key, age, params}]}`), reset when a new game is played. If `twin.alt_path` or the component is missing
+  the page falls back to the read-only HTML timeline. Below, under "Explore more", the full dashboard stays as before.
+  Without a played game the page shows the timeline of its own life plan and the chat as before.
 - `twin/review.py`: `review(game_session)` → `{verdict, timeline, positives, negatives, facts}`. The arrow and amount
   of a choice are the ones its card showed in the game (median at 85 with the choice minus "drive on" at that moment,
   same seed), so the timeline never contradicts the cards; `effect` = the whole-life effect (all played decisions WITH
   vs WITHOUT that one, same seed = common random numbers, whole life re-simulated) is kept per item; life-wide checks on the played life (months on credit, biggest loan, buffer, savings rate, retirement,
   gap years, children, house purchases that would often fail). Cached, well under a second for a typical game.
-- `twin/lifechart/review_view.py`: the game-style HTML blocks (fonts embedded from `twin/frontend3d/fonts`, offline).
+- `twin/lifechart/review_view.py`: the game-style HTML blocks (hero, read-only timeline, the twin's speech panel,
+  number tiles; fonts embedded from `twin/frontend3d/fonts`, offline).
+- `twin/alt_path.py`: the alternative life (moved / removed / added decisions → events, `simulate_paths`,
+  `suggestions`); `twin/lifereview/`: the offline component (editable timeline, suggestion cards, net-worth chart).

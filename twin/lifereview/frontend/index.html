@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life review</title>
+<link rel="stylesheet" href="lifereview.css">
+</head>
+<body>
+<p class="demo-note" hidden>Demo mode (opened outside Streamlit) · made-up data · actions are applied locally.
+  <span class="demo-last"></span></p>
+
+<!-- (1) timeline: start age .. 85, all events, editable -->
+<section class="view card tl" data-view="timeline" hidden aria-label="Your timeline">
+  <div class="band"><span class="ol tl-title">YOUR TIMELINE</span></div>
+  <div class="tl-body">
+    <div class="tl-bar">
+      <p class="tl-hint">Drag a decision to another age, remove it with ✕ or add a new event – your twin
+        simulates the other path in the same random world.</p>
+      <div class="tl-actions">
+        <button type="button" class="btn btn-sm btn-green tl-add" aria-expanded="false">+ ADD EVENT</button>
+        <button type="button" class="btn btn-sm btn-yellow tl-reset">↺ RESET</button>
+      </div>
+    </div>
+    <div class="tl-addpanel" hidden>
+      <div class="ap-head"><span class="ap-h">ADD A LIFE EVENT</span>
+        <button type="button" class="ap-close" aria-label="Close the menu">✕</button></div>
+      <div class="ap-grid" role="group" aria-label="Life events you can add"></div>
+      <div class="ap-form" hidden></div>
+    </div>
+    <div class="tl-scroll">
+      <div class="tl-track">
+        <div class="tl-axis"></div>
+        <div class="tl-ticks" aria-hidden="true"></div>
+        <div class="tl-ghosts" aria-hidden="true"></div>
+        <div class="tl-guide" hidden></div>
+        <div class="tl-items" role="list" aria-label="Decisions on the timeline"></div>
+        <div class="tl-events" role="list" aria-label="What followed from your decisions"></div>
+      </div>
+    </div>
+    <p class="tl-info" aria-live="polite"></p>
+    <div class="tl-legend"></div>
+  </div>
+</section>
+
+<!-- (3) the twin's suggestions -->
+<section class="view card sg" data-view="suggestions" hidden aria-label="Your twin's suggestions">
+  <div class="band purple"><span class="ol sg-title">YOUR TWIN SUGGESTS</span></div>
+  <div class="sg-body">
+    <p class="sg-intro"></p>
+    <div class="sg-grid"></div>
+  </div>
+</section>
+
+<!-- (4) expected net worth -->
+<section class="view card ch" data-view="chart" hidden aria-label="Expected net worth">
+  <div class="band blue"><span class="ol ch-title">EXPECTED NET WORTH</span></div>
+  <div class="ch-body">
+    <div class="ch-top">
+      <p class="ch-sub">Net worth in CHF · median and range p5–p95 of all simulated lives · both paths in the
+        same random world</p>
+      <label class="ch-toggle"><input type="checkbox" class="ch-band" checked> Show range</label>
+    </div>
+    <div class="ch-wrap">
+      <canvas class="ch-canvas" tabindex="0"
+              aria-label="Expected net worth by age. Use the arrow keys to move year by year."
+              aria-describedby="ch-readout"></canvas>
+      <div class="ch-tip" hidden></div>
+      <p class="vh" id="ch-readout" aria-live="polite"></p>
+    </div>
+    <div class="ch-legend"></div>
+    <p class="ch-sum" aria-live="polite"></p>
+  </div>
+</section>
+
+<script src="lifereview.js"></script>
+</body>
+</html>

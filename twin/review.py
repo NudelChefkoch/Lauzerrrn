@@ -338,7 +338,9 @@ def _review(inp: Inputs) -> dict:
     # ---- verdict (0..100 points)
     pts_credit = 30 if months_credit == 0 else 20 if months_credit <= 12 else 10 if months_credit <= 60 else 0
     scale = abs(base_none) + 100_000
-    pts_choices = 30 if total >= 0 else max(0.0, 30 * (1 + total / scale))
+    # choices that cost a large share of what was possible weigh more (−50 % of the no-choice median = 0 points),
+    # so 'Money master' never comes with 'your choices cost CHF 3.5 M'
+    pts_choices = 30 if total >= 0 else max(0.0, 30 * (1 + 2 * total / scale))
     pts_end = 20 if final > 0 else 0
     pts_buffer = 20 * buffer_share
     score = int(round(pts_credit + pts_choices + pts_end + pts_buffer))

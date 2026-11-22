@@ -217,3 +217,48 @@ def test_fake_llm_can_pick_review(ctx, played_review, monkeypatch):
     monkeypatch.setattr(ac, "request_chat", lambda messages, fmt=None, **kw: {"tool": "review", "age": 0, "price": 0})
     out = ac.answer(ctx, "Was my life a success, money-wise?")
     assert out["mode"] == "llm" and out["tool"] == "review" and "Grade" in out["text"]
+
+
+# ---------------------------------------------------------------- suggest tool (another path for the played life)
+FAKE_SUGG = [
+    {"id": "s1", "emoji": "🏡", "title": "Buy a home at 35", "text": "x", "edit": {"added": []}, "impact": "up",
+     "delta": 120_000.0},
+    {"id": "s2", "emoji": "💼", "title": "Job change 3 years earlier", "text": "x", "edit": {"moves": {}},
+     "impact": "up", "delta": 40_000.0},
+    {"id": "s3", "emoji": "🪑", "title": "Retire at 60", "text": "x", "edit": {"added": []}, "impact": "down",
+     "delta": -210_000.0},
+]
+
+
+@pytest.mark.parametrize("question", ["Suggest another path", "What other life decisions could I try?",
+                                      "Show me an alternative", "Hast du einen Vorschlag für einen anderen Weg?"])
+def test_router_suggest_after_a_game(ctx, played_review, question):
+    assert ac.route_offline(ctx, question)[0] != "suggest"           # without a played game: no suggest tool
+    ctx.review, ctx.suggest_fn = played_review, lambda: FAKE_SUGG
+    assert ac.route_offline(ctx, question)[0] == "suggest"
+    assert ac.route_offline(ctx, "What could I have done better?")[0] == "review"
+
+
+def test_suggest_tool_lists_ups_and_a_costly_one(ctx, played_review):
+    out = ac.answer(ctx, "Suggest another path")
+    assert out["tool"] != "suggest"
+    assert "Play the game" in ac.run_tool(ctx, "suggest")["text"]
+    ctx.review, ctx.suggest_fn = played_review, lambda: FAKE_SUGG
+    out = ac.answer(ctx, "Suggest another path")
+    assert out["tool"] == "suggest" and out["text"].endswith(ac.DISCLAIMER)
+    t = out["text"]
+    assert "▲ 🏡 Buy a home at 35 (+CHF 120'000 at 85)" in t and "Job change 3 years earlier" in t
+    assert "Careful: ▼ 🪑 Retire at 60 (−CHF 210'000 at 85)" in t and "Try it" in t
+    assert [s["id"] for s in out["numbers"]["suggestions"]] == ["s1", "s2", "s3"]
+    assert "Suggest another path" in ac.suggestions(ctx)
+    assert "suggest another path" in ac.greeting(ctx)["text"]
+    ctx.suggest_fn = lambda: []
+    assert "none changes" in ac.run_tool(ctx, "suggest")["text"]
+
+
+def test_fake_llm_can_pick_suggest(ctx, played_review, monkeypatch):
+    ctx.review, ctx.suggest_fn = played_review, lambda: FAKE_SUGG
+    monkeypatch.setattr(ac, "status", lambda force=False: {"available": True, "model": "fake"})
+    monkeypatch.setattr(ac, "request_chat", lambda messages, fmt=None, **kw: {"tool": "suggest", "age": 0, "price": 0})
+    out = ac.answer(ctx, "How could my life have gone differently?")
+    assert out["mode"] == "llm" and out["tool"] == "suggest" and "Buy a home at 35" in out["text"]
