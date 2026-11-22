@@ -75,6 +75,10 @@ class Macro:
     career_growth: float = 0.0
     student_income_growth: float = 0.0  # p.a. real growth of side-job income while studying
     income_scale: float = 1.0           # multiplies all planned income (for sensitivity analysis)
+    # parameter uncertainty: every Monte Carlo path draws its own mean flow mu_path ~ N(mu, mu_se) once (calibrated
+    # standard error of the person's mean); path 0 (the played life) keeps the point estimate. False = point estimate
+    # on every path (tests, sensitivity tool). The backtest shows the 90 % band is too narrow without it.
+    param_uncertainty: bool = True
 
 
 @dataclass(frozen=True)

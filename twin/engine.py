@@ -3,7 +3,8 @@
 Per path and month t (calendar month m):
   1. portfolio return   (equities: Merton jump-diffusion, bonds: diffusion; monthly rebalanced)
   2. interest           (cash +, credit -, loan -, mortgage -)
-  3. net flow           X = income(state) - expenses*(1-cut) - costs + a_{s,m} + sigma_s*k_{s,m}*eps
+  3. net flow           X = income(state) - expenses*(1-cut) - costs + d_mu + a_{s,m} + sigma_s*k_{s,m}*eps
+                        d_mu ~ N(0, mu_se) once per path = parameter uncertainty of the person's mean flow
   4. house purchase / housing costs
   5. shortfall rule     cash<0: sell portfolio -> cut spending -> credit
   6. repay debt, then invest cash above the emergency buffer
@@ -64,6 +65,11 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
              fixed_until: int = 0, pct_series: tuple[str, ...] | None = None) -> Result:
     """fixed_until: all paths share path 0's random draws before this month (= the realised past),
     so the fan shows futures *conditional* on what already happened.
+    Parameter uncertainty (``a.macro.param_uncertainty``): each path p draws d_mu_p ~ N(0, mu_se) once, i.e. its
+    own mean flow mu + d_mu_p (the estimate of mu from the person's data is uncertain). Path 0 = the played life keeps
+    the point estimate (d_mu = 0); before ``fixed_until`` every path uses path 0's flows (shared past), d_mu only
+    acts from that month on. The draws come from a separate stream seeded with ``seed``, so the other draws stay
+    identical with the flag on or off (common random numbers).
     pct_series: series to compute percentiles for (default: all of SERIES; () = only the metrics, faster)."""
     calib = calib or calibrate()
     if isinstance(person, str):
@@ -129,6 +135,11 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
     if fixed_until > 0:
         for arr in (eq, bd, eps, u_loss, u_back):
             arr[:fixed_until] = arr[:fixed_until, :1]
+    # parameter uncertainty: own stream so eq/bd/eps/u_* are the same with the flag on or off
+    z_mu = np.random.default_rng((int(seed), 0x6D75)).standard_normal(N)
+    se = float(person.mu_se) if np.isfinite(person.mu_se) and person.mu_se > 0 else 0.0
+    d_mu = z_mu * se if (stochastic and a.macro.param_uncertainty and se > 0) else np.zeros(N)
+    d_mu[0] = 0.0                                   # the played life keeps the point estimate
     state_path0 = np.full(T + 1, person.state)
     infl_m = (1 + a.macro.inflation) ** (1 / 12)
 
@@ -183,7 +194,8 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
                 sp = calib.states[int(s)]
                 seas[idx] = sp.seasonal[m]
                 sig[idx] = (person.sigma if s == person.state else sp.sigma) * sp.sigma_mult[m]
-        flow = income - spend - plan.extra_cost[t] * P + (seas + sig * eps[t]) * P
+        dmu = d_mu if t >= fixed_until else 0.0     # shared past: path 0's flows (d_mu[0] = 0)
+        flow = income - spend - plan.extra_cost[t] * P + (dmu + seas + sig * eps[t]) * P
         cash += flow
         booked += flow
 
@@ -244,7 +256,7 @@ def simulate(person: Person | str, events: list[Event] | None = None, years: int
         austerity &= ~((cash >= floor) & (credit <= 0))
         aust_months += austerity
         # only invest while the expected monthly flow is positive (no invest-then-sell while burning cash)
-        saving_phase = (income - spend - plan.extra_cost[t] * P + seas * P) > 0
+        saving_phase = (income - spend - plan.extra_cost[t] * P + (dmu + seas) * P) > 0
         invest = np.where((credit <= 0) & (loan <= 0) & saving_phase,
                           np.clip(cash - buf[t] * expenses, 0, None) * inv[t], 0.0)
         cash -= invest
