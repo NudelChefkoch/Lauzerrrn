@@ -69,7 +69,10 @@ STRATEGY_PRESETS: dict[str, Strategy] = {
 @dataclass(frozen=True)
 class Macro:
     inflation: float = 0.01        # p.a., applied from month 1 to expenses, rent, house value
-    career_growth: float = 0.02    # p.a. real salary growth while employed (young adults: steep)
+    # p.a. real salary growth while employed. Default 0: the challenge data shows flat employed income by age
+    # (median net income of employed profiles per age band stays at ~7,300-8,200 CHF from 17 to 66, slope ~ -8 CHF
+    # per year), so a built-in career ladder is not supported. Promotions / job changes in the game still raise pay.
+    career_growth: float = 0.0
     student_income_growth: float = 0.0  # p.a. real growth of side-job income while studying
     income_scale: float = 1.0           # multiplies all planned income (for sensitivity analysis)
 

@@ -106,7 +106,7 @@ with st.sidebar:
                            buffer_months=st.slider("Emergency fund (months of expenses)", 0.0, 12.0, strategy.buffer_months, 0.5))
         st.caption("Macro")
         macro = Macro(inflation=st.slider("Inflation p.a. (%)", 0.0, 5.0, 1.0, 0.25) / 100,
-                      career_growth=st.slider("Salary growth in a job p.a. (%)", 0.0, 6.0, 2.0, 0.5) / 100)
+                      career_growth=st.slider("Salary growth in a job p.a. (%)", 0.0, 6.0, 0.0, 0.5) / 100)
         st.caption("When cash runs out: sell → cut spending → credit")
         shortfall = Shortfall(spending_cut=st.slider("Spending cut (%)", 0, 40, 15, 5) / 100,
                               credit_rate=st.slider("Credit interest p.a. (%)", 2.0, 15.0, 8.0, 0.5) / 100)

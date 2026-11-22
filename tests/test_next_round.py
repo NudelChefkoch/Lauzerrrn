@@ -91,7 +91,8 @@ def test_master_after_a_bachelor_job_still_gets_the_master_job():
     p = pay(s)
     assert p["play"]["hud"]["state"] == "graduated · looking"
     assert card(p, "grad_job")["locked"] is None and "6'300" in card(p, "grad_job")["text"]
-    assert s.choose("grad_job") and pay(s)["play"]["hud"]["income"] > 6300
+    # >= : with career_growth 0 (the data default) the salary is exactly the master job pay
+    assert s.choose("grad_job") and pay(s)["play"]["hud"]["income"] >= 6300
 
 
 def test_house_lock_matches_the_engine_purchase():

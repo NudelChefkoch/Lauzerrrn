@@ -14,7 +14,7 @@ def _variants(a: Assumptions):
     m, mac, sh, sc = a.market, a.macro, a.shortfall, a.shocks
     yield "Equity return", "3 %", "9 %", a.with_(market=replace(m, equity_mu=0.03)), a.with_(market=replace(m, equity_mu=0.09))
     yield "Inflation", "0 %", "2.5 %", a.with_(macro=replace(mac, inflation=0.0)), a.with_(macro=replace(mac, inflation=0.025))
-    yield "Salary growth", "0 %", "4 %", a.with_(macro=replace(mac, career_growth=0.0)), a.with_(macro=replace(mac, career_growth=0.04))
+    yield "Salary growth", "-1 %", "+2 %", a.with_(macro=replace(mac, career_growth=-0.01)), a.with_(macro=replace(mac, career_growth=0.02))
     yield "Income", "-10 %", "+10 %", a.with_(macro=replace(mac, income_scale=0.9)), a.with_(macro=replace(mac, income_scale=1.1))
     yield "Equity volatility", "10 %", "25 %", a.with_(market=replace(m, equity_sigma=0.10)), a.with_(market=replace(m, equity_sigma=0.25))
     yield "Credit interest", "4 %", "12 %", a.with_(shortfall=replace(sh, credit_rate=0.04)), a.with_(shortfall=replace(sh, credit_rate=0.12))

@@ -152,7 +152,7 @@ def build_plan(person: Person, events: list[Event], months: int,
         years = np.arange(T - t0) / 12.0
         return salary * (1 + g) ** years
 
-    if person.state == EMPLOYED:          # someone already employed gets the same career growth as a new job
+    if person.state == EMPLOYED:          # someone already employed gets the same career growth as a new job (0 by default)
         income[:] = career(0, person.income)
 
     def set_from(t0: int, s: int, inc: np.ndarray | float) -> None:
